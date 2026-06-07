@@ -1,6 +1,5 @@
 import { ArchitectureElement } from '../../types'
 import { getElementIcon, getElementColor, getElementLabel } from '../../utils/elementUtils.tsx'
-import { X } from 'lucide-react'
 
 interface PropertiesPanelProps {
   element: ArchitectureElement | null

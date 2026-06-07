@@ -3,6 +3,7 @@ import { Diagram } from '../types'
 // Root diagram: Customer Onboarding
 export const rootDiagram: Diagram = {
   id: 'diagram-root',
+  name: 'Customer Onboarding',
   nodes: [
     {
       id: 'node-mission',
@@ -26,7 +27,7 @@ export const rootDiagram: Diagram = {
         automationLevel: '30%'
       },
       impact: 'Delays customer onboarding by 3-5 days',
-      childDiagramId: 'diagram-node-process-1' // This will be created on demand
+      linkedDiagramId: 'diagram-account-provisioning'
     },
     {
       id: 'node-bottleneck',
@@ -102,6 +103,62 @@ export const rootDiagram: Diagram = {
     }
   ]
 }
+
+export const accountProvisioningDiagram: Diagram = {
+  id: 'diagram-account-provisioning',
+  name: 'Account Provisioning',
+  parentId: 'diagram-root',
+  parentNodeId: 'node-process-1',
+  nodes: [
+    {
+      id: 'node-request-intake',
+      type: 'process',
+      title: 'Access Request Intake',
+      description: 'Customer access request is received and reviewed',
+      position: { x: 100, y: 120 },
+      status: 'confirmed'
+    },
+    {
+      id: 'node-permission-review',
+      type: 'process',
+      title: 'Permission Review',
+      description: 'Required roles and groups are validated before account setup',
+      position: { x: 360, y: 120 },
+      status: 'confirmed'
+    },
+    {
+      id: 'node-account-creation',
+      type: 'system',
+      title: 'Account Creation',
+      description: 'Identity system provisions the user account',
+      position: { x: 620, y: 120 },
+      status: 'pending'
+    }
+  ],
+  connectors: [
+    {
+      id: 'conn-provisioning-1',
+      sourceId: 'node-request-intake',
+      targetId: 'node-permission-review',
+      type: 'flow',
+      label: 'then',
+      status: 'confirmed'
+    },
+    {
+      id: 'conn-provisioning-2',
+      sourceId: 'node-permission-review',
+      targetId: 'node-account-creation',
+      type: 'flow',
+      label: 'then',
+      status: 'pending'
+    }
+  ]
+}
+
+export const mockDiagrams: Diagram[] = [
+  rootDiagram,
+  accountProvisioningDiagram
+]
 
 // Legacy export for backward compatibility
 export const architectureData = rootDiagram

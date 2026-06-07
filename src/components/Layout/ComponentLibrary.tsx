@@ -1,12 +1,38 @@
 import { useState } from 'react'
 import { ChevronDown, Plus, Search } from 'lucide-react'
+import {
+  BPMN_COMPONENT_DEFINITIONS,
+  BPMN_COMPONENT_GROUPS,
+  BPMN_COMPONENT_TYPES,
+  TOGAF_COMPONENT_DEFINITIONS,
+  TOGAF_COMPONENT_GROUPS,
+  TOGAF_COMPONENT_TYPES
+} from '../../data/componentDefinitions'
 import { getNodeIcon, getNodeColor } from '../../utils/elementUtils.tsx'
+
+const TOGAF_CATEGORY = 'TOGAF / Enterprise Architecture'
+const BPMN_CATEGORY = 'BPMN / Process Engineering'
 
 const COMPONENT_CATEGORIES = {
   'ArchiMate': ['mission', 'vision', 'process', 'system', 'data_store'],
   'Technologies': ['system', 'data_store'],
   'Analysis': ['bottleneck', 'gap'],
   'Solutions': ['solution'],
+  [TOGAF_CATEGORY]: TOGAF_COMPONENT_TYPES,
+  [BPMN_CATEGORY]: BPMN_COMPONENT_TYPES,
+  'Drawing': [
+    'shape_rectangle',
+    'shape_rounded_rectangle',
+    'shape_ellipse',
+    'shape_diamond',
+    'shape_hexagon',
+    'shape_cylinder',
+    'shape_cloud',
+    'shape_document',
+    'shape_sticky_note',
+    'shape_text_label',
+    'shape_container'
+  ],
 }
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -18,18 +44,33 @@ const COMPONENT_LABELS: Record<string, string> = {
   'bottleneck': 'Bottleneck',
   'gap': 'Gap',
   'solution': 'Solution',
+  'shape_rectangle': 'Rectangle',
+  'shape_rounded_rectangle': 'Rounded Rectangle',
+  'shape_ellipse': 'Circle / Ellipse',
+  'shape_diamond': 'Diamond',
+  'shape_hexagon': 'Hexagon',
+  'shape_cylinder': 'Cylinder / Database',
+  'shape_cloud': 'Cloud',
+  'shape_document': 'Document',
+  'shape_sticky_note': 'Sticky Note',
+  'shape_text_label': 'Text Label',
+  'shape_container': 'Container / Group',
 }
 
 interface ComponentLibraryProps {
   onAddNode?: (type: string) => void
+  className?: string
 }
 
-export default function ComponentLibrary({ onAddNode }: ComponentLibraryProps) {
+export default function ComponentLibrary({ onAddNode, className = 'w-80 border-r border-gray-200' }: ComponentLibraryProps) {
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'ArchiMate': true,
     'Technologies': true,
     'Analysis': true,
     'Solutions': true,
+    [TOGAF_CATEGORY]: true,
+    [BPMN_CATEGORY]: true,
+    'Drawing': true,
   })
   const [search, setSearch] = useState('')
 
@@ -40,15 +81,51 @@ export default function ComponentLibrary({ onAddNode }: ComponentLibraryProps) {
     }))
   }
 
+  const getComponentLabel = (type: string) =>
+    COMPONENT_LABELS[type] ?? TOGAF_COMPONENT_DEFINITIONS[type]?.label ?? BPMN_COMPONENT_DEFINITIONS[type]?.label ?? type
+
   const filteredCategories = Object.entries(COMPONENT_CATEGORIES).map(([category, types]) => ({
     category,
     types: types.filter(type =>
-      COMPONENT_LABELS[type].toLowerCase().includes(search.toLowerCase())
+      getComponentLabel(type).toLowerCase().includes(search.toLowerCase())
     )
   })).filter(({ types }) => types.length > 0)
 
+  const handleDragStart = (e: React.DragEvent, type: string) => {
+    e.dataTransfer.setData('application/x-diagram-node-type', type)
+    e.dataTransfer.setData('text/plain', type)
+    e.dataTransfer.effectAllowed = 'copy'
+  }
+
+  const renderComponentButton = (type: string) => {
+    const colors = getNodeColor(type)
+    return (
+      <button
+        key={type}
+        onClick={() => onAddNode?.(type)}
+        onDragStart={(e) => handleDragStart(e, type)}
+        className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border ${colors.border} ${colors.bg} hover:opacity-80 transition-opacity cursor-grab active:cursor-grabbing`}
+        draggable
+      >
+        <div className={colors.text}>
+          {getNodeIcon(type)}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-900">
+            {getComponentLabel(type)}
+          </p>
+          {(TOGAF_COMPONENT_DEFINITIONS[type] || BPMN_COMPONENT_DEFINITIONS[type]) && (
+            <p className="text-xs text-gray-500 truncate">
+              {TOGAF_COMPONENT_DEFINITIONS[type]?.layer ?? BPMN_COMPONENT_DEFINITIONS[type]?.category}
+            </p>
+          )}
+        </div>
+      </button>
+    )
+  }
+
   return (
-    <div className="w-80 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
+    <div className={`${className} bg-white flex flex-col overflow-hidden`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
         <h2 className="text-sm font-semibold text-gray-900 mb-3">Component Library</h2>
@@ -99,28 +176,24 @@ export default function ComponentLibrary({ onAddNode }: ComponentLibraryProps) {
 
             {/* Components */}
             {expandedCategories[category] && (
-              <div className="px-2 pb-2 space-y-1">
-                {types.map(type => {
-                  const colors = getNodeColor(type)
-                  return (
-                    <button
-                      key={type}
-                      onClick={() => onAddNode?.(type)}
-                      className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border ${colors.border} ${colors.bg} hover:opacity-80 transition-opacity cursor-pointer`}
-                      draggable
-                    >
-                      <div className={colors.text}>
-                        {getNodeIcon(type)}
+              category === TOGAF_CATEGORY || category === BPMN_CATEGORY ? (
+                <div className="px-2 pb-2 space-y-3">
+                  {(category === TOGAF_CATEGORY ? TOGAF_COMPONENT_GROUPS : BPMN_COMPONENT_GROUPS).map(group => (
+                    <div key={group.layer}>
+                      <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                        {group.layer}
+                      </p>
+                      <div className="space-y-1">
+                        {group.components.map(component => renderComponentButton(component.type))}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900">
-                          {COMPONENT_LABELS[type]}
-                        </p>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-2 pb-2 space-y-1">
+                  {types.map(type => renderComponentButton(type))}
+                </div>
+              )
             )}
           </div>
         ))}
@@ -133,23 +206,7 @@ export default function ComponentLibrary({ onAddNode }: ComponentLibraryProps) {
             </div>
             <div className="px-2 pb-2 space-y-1">
               {types.map(type => {
-                const colors = getNodeColor(type)
-                return (
-                  <button
-                    key={type}
-                    onClick={() => onAddNode?.(type)}
-                    className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border ${colors.border} ${colors.bg} hover:opacity-80 transition-opacity cursor-pointer`}
-                  >
-                    <div className={colors.text}>
-                      {getNodeIcon(type)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900">
-                        {COMPONENT_LABELS[type]}
-                      </p>
-                    </div>
-                  </button>
-                )
+                return renderComponentButton(type)
               })}
             </div>
           </div>

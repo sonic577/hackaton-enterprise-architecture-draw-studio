@@ -6,12 +6,14 @@ interface DiagramExplorerProps {
   diagrams: Diagram[]
   currentDiagramId: string
   onSelectDiagram: (diagramId: string) => void
+  className?: string
 }
 
 export const DiagramExplorer: React.FC<DiagramExplorerProps> = ({
   diagrams,
   currentDiagramId,
-  onSelectDiagram
+  onSelectDiagram,
+  className = 'w-64 border-r border-gray-200'
 }) => {
   // Group diagrams by hierarchy (root diagrams and their children)
   const rootDiagrams = diagrams.filter(d => !d.parentId)
@@ -58,7 +60,7 @@ export const DiagramExplorer: React.FC<DiagramExplorerProps> = ({
   }
 
   return (
-    <div className="w-64 bg-white border-r border-gray-200 flex flex-col h-full overflow-hidden">
+    <div className={`${className} bg-white flex flex-col overflow-hidden`}>
       <div className="px-4 py-3 border-b border-gray-200">
         <h2 className="text-sm font-semibold text-gray-900">Diagrams</h2>
       </div>

@@ -1,12 +1,18 @@
 import { DiagramNode, DiagramConnector, Selection } from '../../types'
 import { getNodeIcon, getNodeColor, getStatusBadgeColor } from '../../utils/elementUtils.tsx'
-import { X } from 'lucide-react'
+import { groupAnalysisResults, ProcessAnalysisResult } from '../../utils/processAnalyzer'
+import { ArrowRight, Plus, X } from 'lucide-react'
 
 interface InspectorProps {
   selection: Selection
   nodes: DiagramNode[]
   connectors: DiagramConnector[]
   onClearSelection: () => void
+  onOpenDiagram?: (diagramId: string) => void
+  onCreateChildDiagram?: (nodeId: string) => void
+  analysisResults?: ProcessAnalysisResult[]
+  onSelectAnalysisResult?: (result: ProcessAnalysisResult) => void
+  allDiagrams?: unknown[]
 }
 
 export default function Inspector({ 
@@ -15,9 +21,73 @@ export default function Inspector({
   connectors, 
   onClearSelection,
   onOpenDiagram,
-  allDiagrams = []
+  onCreateChildDiagram,
+  analysisResults = [],
+  onSelectAnalysisResult
 }: InspectorProps) {
   if (selection.type === null) {
+    if (analysisResults.length > 0) {
+      const groupedResults = groupAnalysisResults(analysisResults)
+      const severityClasses: Record<string, string> = {
+        low: 'bg-gray-100 text-gray-700',
+        medium: 'bg-amber-100 text-amber-800',
+        high: 'bg-red-100 text-red-800'
+      }
+
+      return (
+        <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900">Reasoning Panel</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Local process analysis for the current diagram.
+            </p>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-5">
+            {groupedResults.map(({ group, results }) => (
+              <div key={group}>
+                <div className="mb-2 flex items-center justify-between">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-600">{group}</h4>
+                  <span className="text-xs text-gray-400">{results.length}</span>
+                </div>
+                {results.length === 0 ? (
+                  <p className="rounded border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                    No findings.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {results.map(result => (
+                      <button
+                        key={result.id}
+                        onClick={() => onSelectAnalysisResult?.(result)}
+                        className="w-full rounded border border-gray-200 bg-white p-3 text-left transition-colors hover:border-amber-300 hover:bg-amber-50"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="text-sm font-semibold text-gray-900">{result.title}</p>
+                          <span className={`rounded px-2 py-0.5 text-xs font-medium ${severityClasses[result.severity]}`}>
+                            {result.severity}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed text-gray-600">{result.description}</p>
+                        <p className="mt-2 text-xs leading-relaxed text-gray-500">{result.reasoning}</p>
+                        <div className="mt-2 rounded bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                          {result.suggestedAction}
+                        </div>
+                        {result.relatedNodeIds.length > 0 && (
+                          <p className="mt-2 text-xs text-gray-400">
+                            Related nodes: {result.relatedNodeIds.length}
+                          </p>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
+
     return (
       <div className="w-96 border-l border-gray-200 bg-white flex flex-col p-6">
         <div className="flex items-center justify-between mb-4">
@@ -40,6 +110,13 @@ export default function Inspector({
 
     const colors = getNodeColor(node.type)
     const relatedConnectors = connectors.filter(c => c.sourceId === node.id || c.targetId === node.id)
+    const nodeTypeLabel = node.name ?? node.type
+      .replace(/^shape_/, '')
+      .replace(/^togaf_[a-z]+_/, '')
+      .replace(/^bpmn_/, '')
+      .split('_')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
 
     return (
       <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
@@ -51,7 +128,7 @@ export default function Inspector({
             </div>
             <div className="min-w-0">
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                {node.type.replace(/_/g, ' ')}
+                {node.layer ?? node.type.replace(/_/g, ' ')}
               </p>
               <h3 className="text-base font-bold text-gray-900 mt-1 line-clamp-2">
                 {node.title}
@@ -65,6 +142,48 @@ export default function Inspector({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Layer */}
+          {node.layer && (
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-2">Layer</p>
+              <p className="text-sm font-medium text-gray-900 bg-blue-50 border border-blue-200 rounded px-3 py-2">
+                {node.layer}
+              </p>
+            </div>
+          )}
+
+          {/* BPMN Metadata */}
+          {(node.category || node.bpmnType) && (
+            <div className="grid grid-cols-1 gap-3">
+              {node.category && (
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">BPMN Category</p>
+                  <p className="text-sm font-medium text-gray-900 bg-sky-50 border border-sky-200 rounded px-3 py-2">
+                    {node.category}
+                  </p>
+                </div>
+              )}
+              {node.bpmnType && (
+                <div>
+                  <p className="text-xs font-medium text-gray-600 mb-2">BPMN Type</p>
+                  <p className="text-sm font-medium text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                    {node.bpmnType}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Type */}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">
+              {node.type.startsWith('shape_') ? 'Shape Type' : 'Node Type'}
+            </p>
+            <p className="text-sm font-medium text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+              {nodeTypeLabel}
+            </p>
+          </div>
+
           {/* Status */}
           {node.status && (
             <div>
@@ -95,6 +214,16 @@ export default function Inspector({
             </div>
           )}
 
+          {/* Source */}
+          {node.source && (
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-2">Source</p>
+              <p className="text-sm text-gray-700 leading-relaxed">
+                {node.source}
+              </p>
+            </div>
+          )}
+
           {/* Properties */}
           {node.properties && Object.keys(node.properties).length > 0 && (
             <div>
@@ -117,7 +246,17 @@ export default function Inspector({
               className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
             >
               <ArrowRight size={16} />
-              Open Diagram
+              Open diagram
+            </button>
+          )}
+
+          {!node.linkedDiagramId && (
+            <button
+              onClick={() => onCreateChildDiagram?.(node.id)}
+              className="w-full px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus size={16} />
+              Create child diagram
             </button>
           )}
 
