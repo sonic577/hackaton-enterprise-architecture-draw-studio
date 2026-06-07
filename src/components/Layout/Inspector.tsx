@@ -11,6 +11,7 @@ interface InspectorProps {
   onOpenDiagram?: (diagramId: string) => void
   onCreateChildDiagram?: (nodeId: string) => void
   analysisResults?: ProcessAnalysisResult[]
+  analysisMessage?: string | null
   onSelectAnalysisResult?: (result: ProcessAnalysisResult) => void
   allDiagrams?: unknown[]
 }
@@ -23,9 +24,29 @@ export default function Inspector({
   onOpenDiagram,
   onCreateChildDiagram,
   analysisResults = [],
+  analysisMessage = null,
   onSelectAnalysisResult
 }: InspectorProps) {
   if (selection.type === null) {
+    if (analysisMessage) {
+      return (
+        <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900">Reasoning Panel</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Local process analysis for the current diagram.
+            </p>
+          </div>
+          <div className="flex flex-1 items-center justify-center p-6 text-center">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">No process elements found</p>
+              <p className="mt-2 text-sm leading-relaxed text-amber-800">{analysisMessage}</p>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     if (analysisResults.length > 0) {
       const groupedResults = groupAnalysisResults(analysisResults)
       const severityClasses: Record<string, string> = {

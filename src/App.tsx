@@ -55,6 +55,7 @@ export default function App() {
   const [quickCreateText, setQuickCreateText] = useState('')
   const [projectMessage, setProjectMessage] = useState<string | null>(null)
   const [analysisResults, setAnalysisResults] = useState<ProcessAnalysisResult[]>([])
+  const [analysisMessage, setAnalysisMessage] = useState<string | null>(null)
   const [highlightedAnalysisNodeIds, setHighlightedAnalysisNodeIds] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -72,9 +73,31 @@ export default function App() {
 
   const issueNodeIds = Array.from(new Set(analysisResults.flatMap(result => result.relatedNodeIds)))
 
+  const hasProcessLikeNodes = () => currentDiagram.nodes.some(node => {
+    const text = `${node.type} ${node.title} ${node.description ?? ''} ${node.bpmnType ?? ''}`.toLowerCase()
+    return (
+      node.type === 'process' ||
+      node.type.startsWith('bpmn_') ||
+      text.includes('process') ||
+      text.includes('task') ||
+      text.includes('workflow') ||
+      text.includes('activity')
+    )
+  })
+
   const handleAnalyzeProcess = () => {
+    if (!hasProcessLikeNodes()) {
+      setAnalysisResults([])
+      setHighlightedAnalysisNodeIds([])
+      setSelection({ type: null })
+      setAnalysisMessage('Add a process, BPMN task, event, gateway, or workflow node before running process analysis.')
+      setProjectMessage('No process nodes found in the current diagram.')
+      return
+    }
+
     const results = analyzeProcess(currentDiagram.nodes, currentDiagram.connectors)
     setAnalysisResults(results)
+    setAnalysisMessage(null)
     setHighlightedAnalysisNodeIds([])
     setSelection({ type: null })
     setProjectMessage(`Process analysis complete: ${results.length} result${results.length === 1 ? '' : 's'} found.`)
@@ -584,6 +607,7 @@ export default function App() {
           onOpenDiagram={handleOpenDiagram}
           onCreateChildDiagram={handleCreateChildDiagram}
           analysisResults={analysisResults}
+          analysisMessage={analysisMessage}
           onSelectAnalysisResult={handleSelectAnalysisResult}
         />
       </div>
