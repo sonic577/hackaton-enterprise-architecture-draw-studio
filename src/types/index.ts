@@ -23,6 +23,8 @@ export interface ArchitectureElement {
 
 // Connector/Relationship types
 export type ConnectorType = 'related_to' | 'uses' | 'depends_on' | 'supports' | 'contains' | 'impacts' | 'consumes' | 'produces' | 'flow' | 'association'
+export type ConnectorLineStyle = 'solid' | 'dashed' | 'dotted'
+export type ConnectorMarker = 'none' | 'arrow' | 'open_arrow' | 'diamond' | 'circle'
 
 // Node in the diagram
 export interface DiagramNode {
@@ -54,8 +56,13 @@ export interface DiagramConnector {
   targetId: string
   type: ConnectorType
   label?: string
+  lineStyle?: ConnectorLineStyle
+  startMarker?: ConnectorMarker
+  endMarker?: ConnectorMarker
+  direction?: string
   description?: string
   evidence?: string[]
+  source?: string
   impact?: string
   status?: 'extracted' | 'inferred' | 'pending' | 'confirmed'
 }
@@ -72,10 +79,12 @@ export interface DiagramData {
 }
 
 // Selection state
-export type SelectionType = 'node' | 'connector' | 'canvas' | null
+export type SelectionType = 'node' | 'connector' | 'multi' | 'canvas' | null
 export interface Selection {
   type: SelectionType
   id?: string
+  nodeIds?: string[]
+  connectorIds?: string[]
 }
 
 // Diagram with optional parent node reference

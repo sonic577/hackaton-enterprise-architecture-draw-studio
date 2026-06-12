@@ -1,4 +1,5 @@
 import { DiagramNode } from '../types'
+import { getMaterialIconName } from '../utils/elementUtils'
 
 export interface ComponentDefinition {
   type: string
@@ -192,7 +193,8 @@ export const createComponentMetadata = (type: string): Partial<DiagramNode> => {
       properties: {
         framework: 'BPMN / Process Engineering',
         category: definition.category,
-        bpmn_type: definition.bpmnType
+        bpmn_type: definition.bpmnType,
+        material_icon: getMaterialIconName(type)
       },
       evidence: ['Component library'],
       source: 'Component library'
@@ -207,7 +209,8 @@ export const createComponentMetadata = (type: string): Partial<DiagramNode> => {
     properties: {
       layer: definition.layer,
       component_type: definition.label,
-      framework: 'TOGAF / Enterprise Architecture'
+      framework: 'TOGAF / Enterprise Architecture',
+      material_icon: getMaterialIconName(type)
     },
     evidence: ['Component library'],
     source: 'Component library'

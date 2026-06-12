@@ -1,85 +1,132 @@
-import {
-  Package,
-  Eye,
-  Link2,
-  Zap,
-  AlertTriangle,
-  Wrench,
-  Target,
-  Lightbulb,
-  Database,
-  Square,
-  Circle,
-  Diamond,
-  Hexagon,
-  Cloud,
-  FileText,
-  StickyNote,
-  Type,
-  Group
-} from 'lucide-react'
+export const MATERIAL_ICON_BY_TYPE: Record<string, string> = {
+  mission: 'flag',
+  vision: 'visibility',
+  process: 'schema',
+  system: 'apps',
+  data_store: 'storage',
+  bottleneck: 'speed',
+  gap: 'warning',
+  risk: 'report',
+  solution: 'extension',
+  recommendation: 'tips_and_updates',
 
-export function getNodeIcon(type: string) {
-  const iconClass = 'w-5 h-5'
+  togaf_business_mission: 'flag',
+  togaf_business_vision: 'visibility',
+  togaf_business_goal: 'track_changes',
+  togaf_business_objective: 'radio_button_checked',
+  togaf_business_capability: 'psychology',
+  togaf_business_value_stream: 'timeline',
+  togaf_business_value_chain: 'account_tree',
+  togaf_business_business_process: 'schema',
+  togaf_business_actor: 'person',
+  togaf_business_role: 'badge',
+  togaf_business_organization_unit: 'corporate_fare',
 
-  if (type.startsWith('togaf_business_')) return <Target className={iconClass} />
-  if (type.startsWith('togaf_data_')) return <Database className={iconClass} />
-  if (type.startsWith('togaf_application_')) return <Package className={iconClass} />
-  if (type.startsWith('togaf_technology_')) return <Zap className={iconClass} />
-  if (type.startsWith('togaf_motivation_')) return <Lightbulb className={iconClass} />
-  if (type.startsWith('togaf_governance_')) return <Wrench className={iconClass} />
-  if (type.startsWith('bpmn_start') || type.startsWith('bpmn_intermediate') || type.startsWith('bpmn_end') || type.endsWith('_event')) return <Circle className={iconClass} />
-  if (type.includes('gateway')) return <Diamond className={iconClass} />
-  if (type.includes('data_store')) return <Database className={iconClass} />
-  if (type.includes('data_object') || type.includes('data_input') || type.includes('data_output')) return <FileText className={iconClass} />
-  if (type === 'bpmn_pool' || type === 'bpmn_lane' || type === 'bpmn_group') return <Group className={iconClass} />
-  if (type === 'bpmn_text_annotation') return <Type className={iconClass} />
-  if (type.startsWith('bpmn_')) return <Square className={iconClass} />
+  togaf_data_data_entity: 'database',
+  togaf_data_data_object: 'dataset',
+  togaf_data_data_store: 'storage',
+  togaf_data_data_flow: 'sync_alt',
+  togaf_data_information_concept: 'hub',
 
-  switch (type) {
-    case 'mission':
-      return <Target className={iconClass} />
-    case 'vision':
-      return <Eye className={iconClass} />
-    case 'process':
-      return <Zap className={iconClass} />
-    case 'system':
-      return <Package className={iconClass} />
-    case 'data_store':
-      return <Database className={iconClass} />
-    case 'bottleneck':
-      return <AlertTriangle className={iconClass} />
-    case 'gap':
-      return <Wrench className={iconClass} />
-    case 'risk':
-      return <AlertTriangle className={iconClass} />
-    case 'solution':
-    case 'recommendation':
-      return <Lightbulb className={iconClass} />
-    case 'shape_rectangle':
-    case 'shape_rounded_rectangle':
-      return <Square className={iconClass} />
-    case 'shape_ellipse':
-      return <Circle className={iconClass} />
-    case 'shape_diamond':
-      return <Diamond className={iconClass} />
-    case 'shape_hexagon':
-      return <Hexagon className={iconClass} />
-    case 'shape_cylinder':
-      return <Database className={iconClass} />
-    case 'shape_cloud':
-      return <Cloud className={iconClass} />
-    case 'shape_document':
-      return <FileText className={iconClass} />
-    case 'shape_sticky_note':
-      return <StickyNote className={iconClass} />
-    case 'shape_text_label':
-      return <Type className={iconClass} />
-    case 'shape_container':
-      return <Group className={iconClass} />
-    default:
-      return <Link2 className={iconClass} />
-  }
+  togaf_application_application_component: 'apps',
+  togaf_application_application_service: 'api',
+  togaf_application_interface: 'integration_instructions',
+  togaf_application_api: 'api',
+  togaf_application_integration: 'cable',
+  togaf_application_event: 'bolt',
+  togaf_application_workflow: 'alt_route',
+
+  togaf_technology_technology_component: 'memory',
+  togaf_technology_node: 'dns',
+  togaf_technology_server: 'developer_board',
+  togaf_technology_network: 'lan',
+  togaf_technology_cloud_service: 'cloud',
+  togaf_technology_device: 'devices',
+  togaf_technology_deployment_unit: 'deployed_code',
+
+  togaf_motivation_driver: 'explore',
+  togaf_motivation_requirement: 'rule',
+  togaf_motivation_constraint: 'block',
+  togaf_motivation_principle: 'gavel',
+  togaf_motivation_gap: 'warning',
+  togaf_motivation_risk: 'report',
+  togaf_motivation_recommendation: 'tips_and_updates',
+  togaf_motivation_solution_option: 'extension',
+
+  togaf_governance_policy: 'policy',
+  togaf_governance_standard: 'verified',
+  togaf_governance_control: 'security',
+  togaf_governance_decision: 'fork_right',
+  togaf_governance_evidence: 'fact_check',
+  togaf_governance_compliance_check: 'check_circle',
+
+  bpmn_start_event: 'play_circle',
+  bpmn_intermediate_event: 'radio_button_checked',
+  bpmn_end_event: 'stop_circle',
+  bpmn_timer_event: 'timer',
+  bpmn_message_event: 'mail',
+  bpmn_error_event: 'error',
+  bpmn_signal_event: 'cell_tower',
+  bpmn_conditional_event: 'rule',
+  bpmn_task: 'check_box',
+  bpmn_user_task: 'person_check',
+  bpmn_service_task: 'settings',
+  bpmn_manual_task: 'pan_tool',
+  bpmn_script_task: 'code',
+  bpmn_business_rule_task: 'rule',
+  bpmn_subprocess: 'account_tree',
+  bpmn_collapsed_subprocess: 'account_tree',
+  bpmn_call_activity: 'call_split',
+  bpmn_exclusive_gateway_x: 'close',
+  bpmn_parallel_gateway: 'add',
+  bpmn_inclusive_gateway_o: 'radio_button_unchecked',
+  bpmn_event_based_gateway: 'hub',
+  bpmn_sequence_flow: 'arrow_forward',
+  bpmn_message_flow: 'send',
+  bpmn_association: 'link',
+  bpmn_data_association: 'sync_alt',
+  bpmn_data_object: 'description',
+  bpmn_data_store: 'database',
+  bpmn_data_input: 'input',
+  bpmn_data_output: 'output',
+  bpmn_pool: 'view_column',
+  bpmn_lane: 'table_rows',
+  bpmn_group: 'select_all',
+  bpmn_text_annotation: 'notes',
+
+  shape_rectangle: 'crop_16_9',
+  shape_rounded_rectangle: 'rounded_corner',
+  shape_ellipse: 'circle',
+  shape_diamond: 'change_history',
+  shape_hexagon: 'hexagon',
+  shape_cylinder: 'database',
+  shape_cloud: 'cloud',
+  shape_document: 'description',
+  shape_sticky_note: 'sticky_note_2',
+  shape_text_label: 'title',
+  shape_container: 'select_all'
+}
+
+export function getMaterialIconName(type: string) {
+  if (MATERIAL_ICON_BY_TYPE[type]) return MATERIAL_ICON_BY_TYPE[type]
+  if (type.startsWith('togaf_business_')) return 'business_center'
+  if (type.startsWith('togaf_data_')) return 'database'
+  if (type.startsWith('togaf_application_')) return 'apps'
+  if (type.startsWith('togaf_technology_')) return 'memory'
+  if (type.startsWith('togaf_motivation_')) return 'tips_and_updates'
+  if (type.startsWith('togaf_governance_')) return 'policy'
+  if (type.includes('gateway')) return 'account_tree'
+  if (type.endsWith('_event')) return 'radio_button_checked'
+  if (type.startsWith('bpmn_')) return 'schema'
+  return 'hub'
+}
+
+export function getNodeIcon(type: string, className = 'text-[20px] leading-none') {
+  return (
+    <span className={`material-symbols-rounded select-none ${className}`} aria-hidden="true">
+      {getMaterialIconName(type)}
+    </span>
+  )
 }
 
 export function getNodeColor(type: string): { bg: string; border: string; text: string } {

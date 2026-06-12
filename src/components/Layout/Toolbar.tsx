@@ -1,4 +1,4 @@
-import { Pointer, Link2, Grid3x3, Zap, Presentation, ChevronLeft, Save, Upload, SearchCheck } from 'lucide-react'
+import { Pointer, Link2, Grid3x3, Zap, Presentation, ChevronLeft, Save, Upload, SearchCheck, FileText, Printer } from 'lucide-react'
 
 interface ToolbarProps {
   activeTool?: string
@@ -12,6 +12,8 @@ interface ToolbarProps {
   onAnalyzeProcess?: () => void
   onSaveProject?: () => void
   onLoadProject?: () => void
+  onExportDocx?: () => void
+  onPrintPdf?: () => void
 }
 
 export default function Toolbar({ 
@@ -25,7 +27,9 @@ export default function Toolbar({
   onOpenAiInput,
   onAnalyzeProcess,
   onSaveProject,
-  onLoadProject
+  onLoadProject,
+  onExportDocx,
+  onPrintPdf
 }: ToolbarProps) {
   const tools = [
     { id: 'select', label: 'Select', icon: Pointer },
@@ -99,7 +103,23 @@ export default function Toolbar({
       </div>
 
       {/* Right: Project actions */}
-      <div className="flex w-32 justify-end gap-1">
+      <div className="flex justify-end gap-1">
+        <button
+          onClick={onExportDocx}
+          className="flex items-center gap-1 rounded px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+          title="Export DOCX"
+        >
+          <FileText className="h-5 w-5" />
+          <span className="hidden xl:inline">Export DOCX</span>
+        </button>
+        <button
+          onClick={onPrintPdf}
+          className="flex items-center gap-1 rounded px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+          title="Print / Save as PDF"
+        >
+          <Printer className="h-5 w-5" />
+          <span className="hidden xl:inline">Print / Save as PDF</span>
+        </button>
         <button
           onClick={onSaveProject}
           className="p-2 text-gray-600 transition-colors hover:text-gray-900"

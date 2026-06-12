@@ -23,6 +23,7 @@ interface ContextMenuItem {
 }
 
 interface CanvasProps {
+  activeTool?: string
   nodes: DiagramNode[]
   connectors: DiagramConnector[]
   selection: Selection
@@ -37,7 +38,16 @@ interface CanvasProps {
   onCreateChildDiagram?: (nodeId: string) => void
   onDeleteNode?: (nodeId: string) => void
   onDeleteConnector?: (connectorId: string) => void
+  onDeleteSelection?: () => void
   onAddConnector?: (sourceId: string, targetId: string) => void
+  onReverseConnector?: (connectorId: string) => void
+  onCopySelection?: () => void
+  onCutSelection?: () => void
+  onPaste?: (position?: Position) => void
+  onSelectAll?: () => void
+  onAutoOrganize?: () => void
+  onCreateDiagramNote?: (position: Position) => void
+  hasClipboard?: boolean
   isQuickCreateOpen?: boolean
   quickCreateText?: string
   onOpenQuickCreate?: () => void
@@ -49,6 +59,7 @@ interface CanvasProps {
 }
 
 export default function Canvas({
+  activeTool = 'select',
   nodes,
   connectors,
   selection,
@@ -63,7 +74,16 @@ export default function Canvas({
   onCreateChildDiagram,
   onDeleteNode,
   onDeleteConnector,
+  onDeleteSelection,
   onAddConnector,
+  onReverseConnector,
+  onCopySelection,
+  onCutSelection,
+  onPaste,
+  onSelectAll,
+  onAutoOrganize,
+  onCreateDiagramNote,
+  hasClipboard = false,
   isQuickCreateOpen = false,
   quickCreateText = '',
   onOpenQuickCreate,
@@ -99,6 +119,8 @@ export default function Canvas({
 
   const canvasWidth = 2000
   const canvasHeight = 1500
+  const isConnectMode = activeTool === 'connect'
+  const isPresentationMode = activeTool === 'present'
 
   // Handle mouse wheel zoom
   useEffect(() => {
@@ -142,6 +164,66 @@ export default function Canvas({
   useEffect(() => {
     resizeQuickCreateInput()
   }, [quickCreateText])
+
+  useEffect(() => {
+    const handleKeyboardShortcuts = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isEditingText =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.tagName === 'SELECT' ||
+        Boolean(target?.isContentEditable)
+
+      if (isEditingText) return
+
+      const isCommand = e.ctrlKey || e.metaKey
+
+      if (isCommand && e.key.toLowerCase() === 'c') {
+        e.preventDefault()
+        onCopySelection?.()
+        return
+      }
+
+      if (isCommand && e.key.toLowerCase() === 'x') {
+        e.preventDefault()
+        onCutSelection?.()
+        return
+      }
+
+      if (isCommand && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        onPaste?.()
+        return
+      }
+
+      if (isCommand && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        onSelectAll?.()
+        return
+      }
+
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+
+      if (selection.type === 'multi') {
+        e.preventDefault()
+        onDeleteSelection?.()
+        return
+      }
+
+      if (selection.type === 'node' && selection.id) {
+        e.preventDefault()
+        onDeleteNode?.(selection.id)
+      }
+
+      if (selection.type === 'connector' && selection.id) {
+        e.preventDefault()
+        onDeleteConnector?.(selection.id)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyboardShortcuts)
+    return () => window.removeEventListener('keydown', handleKeyboardShortcuts)
+  }, [selection, onDeleteNode, onDeleteConnector, onDeleteSelection, onCopySelection, onCutSelection, onPaste, onSelectAll])
 
   // Pan handling
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -213,6 +295,7 @@ export default function Canvas({
     // Only drag on left click without modifier keys
     if (e.button !== 0) return
     if (e.ctrlKey || e.shiftKey || e.altKey) return
+    if (isConnectMode || isPresentationMode) return
 
     const node = nodes.find(n => n.id === nodeId)
     if (!node) return
@@ -256,6 +339,8 @@ export default function Canvas({
 
   const handleCanvasContextMenu = (e: React.MouseEvent) => {
     e.preventDefault()
+    if (isPresentationMode) return
+
     setContextMenu({
       type: 'canvas',
       x: e.clientX,
@@ -639,29 +724,91 @@ export default function Canvas({
     onSelectNode(node.id)
   }
 
-  // Calculate connector path (curved)
-  const getConnectorPath = (sourceId: string, targetId: string) => {
-    const source = nodes.find(n => n.id === sourceId)
-    const target = nodes.find(n => n.id === targetId)
-    if (!source || !target) return ''
+  const getConnectorPairKey = (sourceId: string, targetId: string) =>
+    [sourceId, targetId].sort().join('::')
+
+  const getConnectorLineStyle = (connector: DiagramConnector) => {
+    const lineStyle = connector.lineStyle ?? (connector.type === 'flow' ? 'solid' : connector.type === 'related_to' ? 'dashed' : 'solid')
+    if (lineStyle === 'dashed') return '8,6'
+    if (lineStyle === 'dotted') return '2,6'
+    return '0'
+  }
+
+  const getDefaultEndMarker = (connector: DiagramConnector) => {
+    if (connector.endMarker) return connector.endMarker
+    if (connector.type === 'association') return 'none'
+    if (connector.type === 'contains') return 'diamond'
+    return 'arrow'
+  }
+
+  const getMarkerUrl = (marker?: string) => {
+    if (!marker || marker === 'none') return undefined
+    return `url(#connector-${marker})`
+  }
+
+  const getQuadraticPoint = (
+    start: Position,
+    control: Position,
+    end: Position,
+    t: number
+  ): Position => {
+    const inverseT = 1 - t
+    return {
+      x: inverseT * inverseT * start.x + 2 * inverseT * t * control.x + t * t * end.x,
+      y: inverseT * inverseT * start.y + 2 * inverseT * t * control.y + t * t * end.y
+    }
+  }
+
+  const getConnectorVisual = (connector: DiagramConnector) => {
+    const source = nodes.find(n => n.id === connector.sourceId)
+    const target = nodes.find(n => n.id === connector.targetId)
+    if (!source || !target) return null
 
     const sourceCenter = getNodeCenter(source)
     const targetCenter = getNodeCenter(target)
+    const start = { x: sourceCenter.x, y: sourceCenter.y }
+    const end = { x: targetCenter.x, y: targetCenter.y }
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1)
+    const relatedConnectors = connectors.filter(candidate =>
+      getConnectorPairKey(candidate.sourceId, candidate.targetId) === getConnectorPairKey(connector.sourceId, connector.targetId)
+    )
+    const total = relatedConnectors.length
+    const index = Math.max(relatedConnectors.findIndex(candidate => candidate.id === connector.id), 0)
+    const midpoint = {
+      x: start.x + dx / 2,
+      y: start.y + dy / 2
+    }
+    const [firstNodeId, secondNodeId] = [connector.sourceId, connector.targetId].sort()
+    const firstNode = nodes.find(node => node.id === firstNodeId)
+    const secondNode = nodes.find(node => node.id === secondNodeId)
+    const firstCenter = firstNode ? getNodeCenter(firstNode) : start
+    const secondCenter = secondNode ? getNodeCenter(secondNode) : end
+    const referenceDx = secondCenter.x - firstCenter.x
+    const referenceDy = secondCenter.y - firstCenter.y
+    const referenceDistance = Math.max(Math.sqrt(referenceDx * referenceDx + referenceDy * referenceDy), 1)
+    const normal = {
+      x: -referenceDy / referenceDistance,
+      y: referenceDx / referenceDistance
+    }
+    const offset = total <= 1 ? Math.min(distance / 4, 100) : (index - (total - 1) / 2) * 36
+    const control = total <= 1
+      ? { x: midpoint.x, y: midpoint.y + offset }
+      : {
+        x: midpoint.x + normal.x * offset,
+        y: midpoint.y + normal.y * offset
+      }
+    const labelPoint = getQuadraticPoint(start, control, end, 0.5)
+    const labelOffset = total <= 1 ? { x: 0, y: -10 } : { x: normal.x * 14, y: normal.y * 14 - 8 }
 
-    const x1 = sourceCenter.x
-    const y1 = sourceCenter.y
-    const x2 = targetCenter.x
-    const y2 = targetCenter.y
-
-    const dx = x2 - x1
-    const dy = y2 - y1
-    const dist = Math.sqrt(dx * dx + dy * dy)
-
-    // Bezier curve control points
-    const cpx = x1 + dx / 2
-    const cpy = y1 + dy / 2 + Math.min(dist / 4, 100)
-
-    return `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`
+    return {
+      path: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+      labelPosition: {
+        x: labelPoint.x + labelOffset.x,
+        y: labelPoint.y + labelOffset.y
+      }
+    }
   }
 
   const resetZoom = () => {
@@ -694,10 +841,10 @@ export default function Canvas({
           label: 'Add node',
           onClick: () => onAddNode?.('process', contextMenu.canvasPosition)
         },
-        { label: 'Paste', disabled: true },
-        { label: 'Select all', disabled: true },
-        { label: 'Auto organize', disabled: true },
-        { label: 'Create diagram note', disabled: true },
+        { label: 'Paste', disabled: !hasClipboard, onClick: () => onPaste?.(contextMenu.canvasPosition) },
+        { label: 'Select all', onClick: () => onSelectAll?.() },
+        { label: 'Auto organize', onClick: () => onAutoOrganize?.() },
+        { label: 'Create diagram note', onClick: () => onCreateDiagramNote?.(contextMenu.canvasPosition) },
         { label: 'Reset zoom', onClick: resetZoom }
       ]
     }
@@ -733,9 +880,12 @@ export default function Canvas({
     }
 
     return [
-      { label: 'Edit relationship', disabled: true },
-      { label: 'Change connector type', disabled: true },
-      { label: 'Reverse direction', disabled: true },
+      { label: 'Edit relationship', onClick: () => onSelectConnector(contextMenu.connectorId) },
+      { label: 'Change relationship type', onClick: () => onSelectConnector(contextMenu.connectorId) },
+      { label: 'Change line style', onClick: () => onSelectConnector(contextMenu.connectorId) },
+      { label: 'Change start marker', onClick: () => onSelectConnector(contextMenu.connectorId) },
+      { label: 'Change end marker', onClick: () => onSelectConnector(contextMenu.connectorId) },
+      { label: 'Reverse direction', onClick: () => onReverseConnector?.(contextMenu.connectorId) },
       {
         label: 'Delete connector',
         danger: true,
@@ -773,7 +923,6 @@ export default function Canvas({
             }`}
           >
             <span>{item.label}</span>
-            {item.disabled && <span className="ml-2 text-xs text-gray-400">Coming soon</span>}
           </button>
         ))}
       </div>
@@ -810,10 +959,21 @@ export default function Canvas({
         onKeyDown={handleCanvasKeyDown}
         onDragOver={handleCanvasDragOver}
         onDrop={handleCanvasDrop}
-        style={{ cursor: resizingNode ? 'nwse-resize' : isPanning || draggingNodeId ? 'grabbing' : 'grab' }}
+        style={{
+          cursor: resizingNode
+            ? 'nwse-resize'
+            : isPanning || draggingNodeId
+              ? 'grabbing'
+              : isConnectMode
+                ? 'crosshair'
+                : isPresentationMode
+                  ? 'default'
+                  : 'grab'
+        }}
       >
         <svg
           ref={svgRef}
+          data-diagram-export-svg="true"
           width={canvasWidth}
           height={canvasHeight}
           className="absolute"
@@ -844,50 +1004,83 @@ export default function Canvas({
 
           {/* Connectors */}
           <g>
-            {connectors.map(connector => (
-              <g key={connector.id}>
-                <path
-                  d={getConnectorPath(connector.sourceId, connector.targetId)}
-                  fill="none"
-                  stroke={selection.type === 'connector' && selection.id === connector.id ? '#3b82f6' : '#9ca3af'}
-                  strokeWidth={selection.type === 'connector' && selection.id === connector.id ? 3 : 2}
-                  strokeDasharray={connector.type === 'related_to' ? '5,5' : '0'}
-                  markerEnd="url(#arrowhead)"
-                  className="cursor-pointer hover:stroke-blue-400"
-                  onContextMenu={(e) => handleConnectorContextMenu(e, connector.id)}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSelectConnector(connector.id)
-                  }}
-                />
-                {/* Connector label */}
-                {connector.label && (() => {
-                  const source = nodes.find(n => n.id === connector.sourceId)
-                  const target = nodes.find(n => n.id === connector.targetId)
-                  if (!source || !target) return null
+            {connectors.map(connector => {
+              const visual = getConnectorVisual(connector)
+              if (!visual) return null
 
-                  const sourceCenter = getNodeCenter(source)
-                  const targetCenter = getNodeCenter(target)
-
-                  return (
+              return (
+                <g key={connector.id}>
+                  <path
+                    d={visual.path}
+                    fill="none"
+                    stroke="transparent"
+                    strokeWidth={14}
+                    pointerEvents="stroke"
+                    className="cursor-pointer"
+                    onContextMenu={(e) => {
+                      if (isPresentationMode) {
+                        e.preventDefault()
+                        return
+                      }
+                      handleConnectorContextMenu(e, connector.id)
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (isPresentationMode) return
+                      onSelectConnector(connector.id)
+                    }}
+                  />
+                  <path
+                    d={visual.path}
+                    fill="none"
+                    stroke={
+                      (selection.type === 'connector' && selection.id === connector.id) ||
+                      (selection.type === 'multi' && selection.connectorIds?.includes(connector.id))
+                        ? '#3b82f6'
+                        : '#9ca3af'
+                    }
+                    strokeWidth={
+                      (selection.type === 'connector' && selection.id === connector.id) ||
+                      (selection.type === 'multi' && selection.connectorIds?.includes(connector.id))
+                        ? 3
+                        : 2
+                    }
+                    strokeDasharray={getConnectorLineStyle(connector)}
+                    markerStart={getMarkerUrl(connector.startMarker)}
+                    markerEnd={getMarkerUrl(getDefaultEndMarker(connector))}
+                    className="pointer-events-none"
+                    onContextMenu={(e) => {
+                      if (isPresentationMode) {
+                        e.preventDefault()
+                        return
+                      }
+                      handleConnectorContextMenu(e, connector.id)
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (isPresentationMode) return
+                      onSelectConnector(connector.id)
+                    }}
+                  />
+                  {connector.label && (
                     <text
-                      x={(sourceCenter.x + targetCenter.x) / 2}
-                      y={(sourceCenter.y + targetCenter.y) / 2 - 10}
+                      x={visual.labelPosition.x}
+                      y={visual.labelPosition.y}
                       className="text-xs fill-gray-600 pointer-events-none"
                       textAnchor="middle"
                     >
                       {connector.label}
                     </text>
-                  )
-                })()}
-              </g>
-            ))}
+                  )}
+                </g>
+              )
+            })}
           </g>
 
           {/* Arrow marker */}
           <defs>
             <marker
-              id="arrowhead"
+              id="connector-arrow"
               markerWidth="10"
               markerHeight="10"
               refX="8"
@@ -896,6 +1089,36 @@ export default function Canvas({
             >
               <polygon points="0 0, 10 3, 0 6" fill="#9ca3af" />
             </marker>
+            <marker
+              id="connector-open_arrow"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="3"
+              orient="auto"
+            >
+              <path d="M 0 0 L 10 3 L 0 6" fill="none" stroke="#9ca3af" strokeWidth="1.8" />
+            </marker>
+            <marker
+              id="connector-diamond"
+              markerWidth="12"
+              markerHeight="10"
+              refX="10"
+              refY="5"
+              orient="auto"
+            >
+              <polygon points="0 5, 5 0, 10 5, 5 10" fill="#9ca3af" />
+            </marker>
+            <marker
+              id="connector-circle"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="5"
+              orient="auto"
+            >
+              <circle cx="5" cy="5" r="3.5" fill="#9ca3af" />
+            </marker>
           </defs>
 
           {/* Nodes */}
@@ -903,10 +1126,15 @@ export default function Canvas({
             {nodes.map(node => {
               const bounds = getNodeBounds(node)
               const colors = getNodeColor(node.type)
-              const isSelected = selection.type === 'node' && selection.id === node.id
+              const isSelected =
+                (selection.type === 'node' && selection.id === node.id) ||
+                (selection.type === 'multi' && Boolean(selection.nodeIds?.includes(node.id)))
+              const isSingleNodeSelected = selection.type === 'node' && selection.id === node.id
               const isAnalysisHighlighted = highlightedNodeIds.includes(node.id)
               const hasAnalysisIssue = issueNodeIds.includes(node.id)
-              const showConnectorHandle = isSelected || hoveredNodeId === node.id || connectorDraft?.sourceId === node.id
+              const nestedDiagramId = node.linkedDiagramId ?? node.childDiagramId
+              const hasNestedDiagram = Boolean(nestedDiagramId)
+              const showConnectorHandle = isConnectMode || isSelected || hoveredNodeId === node.id || connectorDraft?.sourceId === node.id
               const handlePosition = getConnectorHandlePosition(node)
 
               return (
@@ -914,15 +1142,24 @@ export default function Canvas({
                   key={node.id}
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (isPresentationMode) return
                     onSelectNode(node.id)
                   }}
                   onDoubleClick={(e) => {
                     e.stopPropagation()
+                    if (isPresentationMode) return
                     onDoubleClickNode?.(node)
                   }}
-                  className="cursor-move"
+                  className={isConnectMode ? 'cursor-crosshair' : isPresentationMode ? 'cursor-default' : 'cursor-move'}
                   onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
-                  onContextMenu={(e) => handleNodeContextMenu(e, node.id)}
+                  onContextMenu={(e) => {
+                    if (isPresentationMode) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      return
+                    }
+                    handleNodeContextMenu(e, node.id)
+                  }}
                   onMouseEnter={() => setHoveredNodeId(node.id)}
                   onMouseLeave={() => setHoveredNodeId(current => current === node.id ? null : current)}
                 >
@@ -977,7 +1214,7 @@ export default function Canvas({
                     </div>
                   </foreignObject>
 
-                  {isSelected && (
+                  {isSingleNodeSelected && (
                     <rect
                       x={bounds.x + bounds.width - RESIZE_HANDLE_SIZE / 2}
                       y={bounds.y + bounds.height - RESIZE_HANDLE_SIZE / 2}
@@ -991,6 +1228,37 @@ export default function Canvas({
                       onMouseDown={(e) => handleResizeMouseDown(e, node)}
                       onClick={(e) => e.stopPropagation()}
                     />
+                  )}
+
+                  {hasNestedDiagram && (
+                    <foreignObject
+                      x={bounds.x + bounds.width - 36}
+                      y={bounds.y + 6}
+                      width={30}
+                      height={30}
+                      className="overflow-visible"
+                    >
+                      <button
+                        type="button"
+                        title="Open nested diagram"
+                        className="flex h-7 w-7 items-center justify-center rounded-full border border-blue-200 bg-white text-blue-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          if (!isPresentationMode && nestedDiagramId) {
+                            onOpenDiagram?.(nestedDiagramId)
+                          }
+                        }}
+                      >
+                        <span className="material-symbols-rounded text-[16px] leading-none" aria-hidden="true">
+                          account_tree
+                        </span>
+                      </button>
+                    </foreignObject>
                   )}
 
                   {showConnectorHandle && (
@@ -1011,7 +1279,7 @@ export default function Canvas({
                     <g className="pointer-events-none">
                       <circle
                         cx={bounds.x + bounds.width - 12}
-                        cy={bounds.y + 12}
+                        cy={bounds.y + (hasNestedDiagram ? 38 : 12)}
                         r={9}
                         fill="#f59e0b"
                         stroke="white"
@@ -1019,7 +1287,7 @@ export default function Canvas({
                       />
                       <text
                         x={bounds.x + bounds.width - 12}
-                        y={bounds.y + 16}
+                        y={bounds.y + (hasNestedDiagram ? 42 : 16)}
                         textAnchor="middle"
                         className="fill-white text-xs font-bold"
                       >

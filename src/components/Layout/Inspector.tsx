@@ -1,4 +1,4 @@
-import { DiagramNode, DiagramConnector, Selection } from '../../types'
+import { ConnectorLineStyle, ConnectorMarker, ConnectorType, DiagramNode, DiagramConnector, Selection } from '../../types'
 import { getNodeIcon, getNodeColor, getStatusBadgeColor } from '../../utils/elementUtils.tsx'
 import { groupAnalysisResults, ProcessAnalysisResult } from '../../utils/processAnalyzer'
 import { ArrowRight, Plus, X } from 'lucide-react'
@@ -10,6 +10,8 @@ interface InspectorProps {
   onClearSelection: () => void
   onOpenDiagram?: (diagramId: string) => void
   onCreateChildDiagram?: (nodeId: string) => void
+  onUpdateConnector?: (connectorId: string, updates: Partial<DiagramConnector>) => void
+  onReverseConnector?: (connectorId: string) => void
   analysisResults?: ProcessAnalysisResult[]
   analysisMessage?: string | null
   onSelectAnalysisResult?: (result: ProcessAnalysisResult) => void
@@ -23,6 +25,8 @@ export default function Inspector({
   onClearSelection,
   onOpenDiagram,
   onCreateChildDiagram,
+  onUpdateConnector,
+  onReverseConnector,
   analysisResults = [],
   analysisMessage = null,
   onSelectAnalysisResult
@@ -336,6 +340,34 @@ export default function Inspector({
     )
   }
 
+  if (selection.type === 'multi') {
+    const selectedNodeCount = selection.nodeIds?.length ?? 0
+    const selectedConnectorCount = selection.connectorIds?.length ?? 0
+
+    return (
+      <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-gray-200 flex items-start justify-between">
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Selection</p>
+            <h3 className="text-base font-bold text-gray-900 mt-1">Multiple elements</h3>
+          </div>
+          <button onClick={onClearSelection} className="p-1 hover:bg-gray-100 rounded transition-colors">
+            <X className="w-5 h-5 text-gray-400" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+            <p className="text-sm font-semibold text-blue-900">{selectedNodeCount} nodes selected</p>
+            <p className="mt-1 text-sm text-blue-800">{selectedConnectorCount} connectors selected</p>
+          </div>
+          <p className="text-sm leading-relaxed text-gray-600">
+            Use Ctrl+C to copy, Ctrl+X to cut, Ctrl+V to paste, or Delete to remove the selected elements.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (selection.type === 'connector' && selection.id) {
     const connector = connectors.find(c => c.id === selection.id)
     if (!connector) return null
@@ -343,6 +375,34 @@ export default function Inspector({
     const sourceNode = nodes.find(n => n.id === connector.sourceId)
     const targetNode = nodes.find(n => n.id === connector.targetId)
     if (!sourceNode || !targetNode) return null
+    const relationshipTypes: Array<{ value: ConnectorType; label: string }> = [
+      { value: 'related_to', label: 'Related to' },
+      { value: 'uses', label: 'Uses' },
+      { value: 'depends_on', label: 'Depends on' },
+      { value: 'supports', label: 'Supports' },
+      { value: 'contains', label: 'Contains' },
+      { value: 'impacts', label: 'Impacts' },
+      { value: 'consumes', label: 'Consumes' },
+      { value: 'produces', label: 'Produces' },
+      { value: 'flow', label: 'Flow' },
+      { value: 'association', label: 'Association' }
+    ]
+    const lineStyles: Array<{ value: ConnectorLineStyle; label: string }> = [
+      { value: 'solid', label: 'Solid' },
+      { value: 'dashed', label: 'Dashed' },
+      { value: 'dotted', label: 'Dotted' }
+    ]
+    const markers: Array<{ value: ConnectorMarker; label: string }> = [
+      { value: 'none', label: 'None' },
+      { value: 'arrow', label: 'Arrow' },
+      { value: 'open_arrow', label: 'Open Arrow' },
+      { value: 'diamond', label: 'Diamond' },
+      { value: 'circle', label: 'Circle' }
+    ]
+    const defaultLineStyle: ConnectorLineStyle = connector.type === 'flow' ? 'solid' : connector.type === 'related_to' ? 'dashed' : 'solid'
+    const defaultEndMarker: ConnectorMarker = connector.type === 'association' ? 'none' : connector.type === 'contains' ? 'diamond' : 'arrow'
+    const fieldClass = 'w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
+    const relationshipLabel = relationshipTypes.find(type => type.value === connector.type)?.label ?? connector.type.replace(/_/g, ' ')
 
     return (
       <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
@@ -351,7 +411,7 @@ export default function Inspector({
           <div>
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Relationship</p>
             <h3 className="text-base font-bold text-gray-900 mt-1">
-              {connector.type.replace(/_/g, ' ')}
+              {connector.label || relationshipLabel}
             </h3>
           </div>
           <button onClick={onClearSelection} className="p-1 hover:bg-gray-100 rounded transition-colors">
@@ -379,39 +439,121 @@ export default function Inspector({
             </div>
           </div>
 
-          {/* Type */}
+          {/* Label */}
           <div>
-            <p className="text-xs font-medium text-gray-600 mb-2">Type</p>
-            <p className="text-sm font-medium text-gray-900 bg-blue-50 border border-blue-200 rounded px-3 py-2">
-              {connector.type.replace(/_/g, ' ')}
-            </p>
+            <p className="text-xs font-medium text-gray-600 mb-2">Label</p>
+            <input
+              value={connector.label ?? ''}
+              onChange={(e) => onUpdateConnector?.(connector.id, { label: e.target.value })}
+              className={fieldClass}
+              placeholder="Visible relationship label"
+            />
           </div>
 
-          {/* Label */}
-          {connector.label && (
+          {/* Type */}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Relationship Type</p>
+            <select
+              value={connector.type}
+              onChange={(e) => {
+                const nextType = e.target.value as ConnectorType
+                onUpdateConnector?.(connector.id, {
+                  type: nextType,
+                  label: relationshipTypes.find(type => type.value === nextType)?.label ?? connector.label,
+                  lineStyle: nextType === 'flow' ? 'solid' : nextType === 'related_to' ? 'dashed' : connector.lineStyle,
+                  endMarker: nextType === 'contains' ? 'diamond' : nextType === 'association' ? 'none' : nextType === 'flow' ? 'arrow' : connector.endMarker
+                })
+              }}
+              className={fieldClass}
+            >
+              {relationshipTypes.map(type => (
+                <option key={type.value} value={type.value}>{type.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
             <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Label</p>
-              <p className="text-sm text-gray-700">{connector.label}</p>
+              <p className="text-xs font-medium text-gray-600 mb-2">Line Style</p>
+              <select
+                value={connector.lineStyle ?? defaultLineStyle}
+                onChange={(e) => onUpdateConnector?.(connector.id, { lineStyle: e.target.value as ConnectorLineStyle })}
+                className={fieldClass}
+              >
+                {lineStyles.map(style => (
+                  <option key={style.value} value={style.value}>{style.label}</option>
+                ))}
+              </select>
             </div>
-          )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs font-medium text-gray-600 mb-2">Start Marker</p>
+                <select
+                  value={connector.startMarker ?? 'none'}
+                  onChange={(e) => onUpdateConnector?.(connector.id, { startMarker: e.target.value as ConnectorMarker })}
+                  className={fieldClass}
+                >
+                  {markers.map(marker => (
+                    <option key={marker.value} value={marker.value}>{marker.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-600 mb-2">End Marker</p>
+                <select
+                  value={connector.endMarker ?? defaultEndMarker}
+                  onChange={(e) => onUpdateConnector?.(connector.id, { endMarker: e.target.value as ConnectorMarker })}
+                  className={fieldClass}
+                >
+                  {markers.map(marker => (
+                    <option key={marker.value} value={marker.value}>{marker.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
 
           {/* Description */}
-          {connector.description && (
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Description</p>
-              <p className="text-sm text-gray-700 leading-relaxed">
-                {connector.description}
-              </p>
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Description</p>
+            <textarea
+              value={connector.description ?? ''}
+              onChange={(e) => onUpdateConnector?.(connector.id, { description: e.target.value })}
+              className={`${fieldClass} min-h-20 resize-y`}
+              placeholder="Relationship notes"
+            />
+          </div>
 
           {/* Status */}
-          {connector.status && (
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Status</p>
+            <select
+              value={connector.status ?? 'inferred'}
+              onChange={(e) => onUpdateConnector?.(connector.id, { status: e.target.value as DiagramConnector['status'] })}
+              className={fieldClass}
+            >
+              <option value="extracted">Extracted</option>
+              <option value="inferred">Inferred</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+            </select>
+            <span className={`mt-2 inline-block text-xs font-medium px-2 py-1 rounded ${getStatusBadgeColor(connector.status)}`}>
+              {connector.status ?? 'inferred'}
+            </span>
+          </div>
+
+          <button
+            onClick={() => onReverseConnector?.(connector.id)}
+            className="w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            Reverse direction
+          </button>
+
+          {connector.source && (
             <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Status</p>
-              <span className={`inline-block text-xs font-medium px-2 py-1 rounded ${getStatusBadgeColor(connector.status)}`}>
-                {connector.status}
-              </span>
+              <p className="text-xs font-medium text-gray-600 mb-2">Source</p>
+              <p className="text-sm text-gray-700 leading-relaxed">{connector.source}</p>
             </div>
           )}
 

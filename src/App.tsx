@@ -8,7 +8,8 @@ import { mockDiagrams, rootDiagram } from './data/mockData'
 import { createComponentMetadata } from './data/componentDefinitions'
 import { generateDiagramFromText } from './utils/mockDiagramGenerator'
 import { analyzeProcess, ProcessAnalysisResult } from './utils/processAnalyzer'
-import { Selection, Diagram, DiagramNode, Position } from './types'
+import { exportArchitectureDocx, openPrintableArchitectureDocument } from './utils/documentExport'
+import { Selection, Diagram, DiagramNode, DiagramConnector, Position } from './types'
 
 interface DiagramStackItem {
   diagram: Diagram
@@ -26,6 +27,11 @@ interface SavedProject {
   }
   currentDiagramId: string
   diagrams: Diagram[]
+}
+
+interface InternalClipboard {
+  nodes: DiagramNode[]
+  connectors: DiagramConnector[]
 }
 
 const PROJECT_SCHEMA_VERSION = 1
@@ -51,12 +57,14 @@ export default function App() {
   // Selection state
   const [selection, setSelection] = useState<Selection>({ type: null })
   const [activeTool, setActiveTool] = useState('select')
+  const [isPresentationMode, setIsPresentationMode] = useState(false)
   const [isAiInputOpen, setIsAiInputOpen] = useState(false)
   const [quickCreateText, setQuickCreateText] = useState('')
   const [projectMessage, setProjectMessage] = useState<string | null>(null)
   const [analysisResults, setAnalysisResults] = useState<ProcessAnalysisResult[]>([])
   const [analysisMessage, setAnalysisMessage] = useState<string | null>(null)
   const [highlightedAnalysisNodeIds, setHighlightedAnalysisNodeIds] = useState<string[]>([])
+  const [editorClipboard, setEditorClipboard] = useState<InternalClipboard | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleSelectNode = (nodeId: string) => {
@@ -69,6 +77,16 @@ export default function App() {
 
   const handleCanvasClick = () => {
     setSelection({ type: null })
+  }
+
+  const updateCurrentDiagram = (updatedDiagram: Diagram) => {
+    const newDiagrams = new Map(diagrams)
+    newDiagrams.set(currentDiagram.id, updatedDiagram)
+    setDiagrams(newDiagrams)
+
+    const newStack = [...diagramStack]
+    newStack[newStack.length - 1].diagram = updatedDiagram
+    setDiagramStack(newStack)
   }
 
   const issueNodeIds = Array.from(new Set(analysisResults.flatMap(result => result.relatedNodeIds)))
@@ -110,6 +128,189 @@ export default function App() {
 
   const formatNodeTitle = (type: string) =>
     type.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+
+  const handleAutoOrganize = () => {
+    if (currentDiagram.nodes.length === 0) {
+      setProjectMessage('There are no nodes to organize in the current diagram.')
+      return
+    }
+
+    const columns = Math.max(1, Math.ceil(Math.sqrt(currentDiagram.nodes.length)))
+    const horizontalSpacing = 260
+    const verticalSpacing = 180
+    const startX = 120
+    const startY = 120
+    const updatedDiagram = {
+      ...currentDiagram,
+      nodes: currentDiagram.nodes.map((node, index) => ({
+        ...node,
+        position: {
+          x: startX + (index % columns) * horizontalSpacing,
+          y: startY + Math.floor(index / columns) * verticalSpacing
+        }
+      }))
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+    setActiveTool('select')
+    setProjectMessage('Diagram auto organized.')
+  }
+
+  const getSelectedIds = () => {
+    if (selection.type === 'node' && selection.id) {
+      return { nodeIds: [selection.id], connectorIds: [] }
+    }
+
+    if (selection.type === 'connector' && selection.id) {
+      return { nodeIds: [], connectorIds: [selection.id] }
+    }
+
+    if (selection.type === 'multi') {
+      return {
+        nodeIds: selection.nodeIds ?? [],
+        connectorIds: selection.connectorIds ?? []
+      }
+    }
+
+    return { nodeIds: [], connectorIds: [] }
+  }
+
+  const handleSelectAll = () => {
+    setSelection({
+      type: 'multi',
+      nodeIds: currentDiagram.nodes.map(node => node.id),
+      connectorIds: currentDiagram.connectors.map(connector => connector.id)
+    })
+  }
+
+  const handleCopySelection = () => {
+    const { nodeIds, connectorIds } = getSelectedIds()
+    const copiedNodes = currentDiagram.nodes.filter(node => nodeIds.includes(node.id))
+    const copiedNodeIds = new Set(copiedNodes.map(node => node.id))
+    const copiedConnectors = currentDiagram.connectors.filter(connector =>
+      (connectorIds.includes(connector.id) && copiedNodeIds.has(connector.sourceId) && copiedNodeIds.has(connector.targetId)) ||
+      (copiedNodeIds.has(connector.sourceId) && copiedNodeIds.has(connector.targetId))
+    )
+
+    if (copiedNodes.length === 0) return
+
+    setEditorClipboard({
+      nodes: copiedNodes,
+      connectors: copiedConnectors
+    })
+    setProjectMessage(`Copied ${copiedNodes.length} node${copiedNodes.length === 1 ? '' : 's'}.`)
+  }
+
+  const deleteSelection = () => {
+    const { nodeIds, connectorIds } = getSelectedIds()
+    if (nodeIds.length === 0 && connectorIds.length === 0) return
+
+    const nodeIdSet = new Set(nodeIds)
+    const connectorIdSet = new Set(connectorIds)
+    const updatedDiagram = {
+      ...currentDiagram,
+      nodes: currentDiagram.nodes.filter(node => !nodeIdSet.has(node.id)),
+      connectors: currentDiagram.connectors.filter(connector =>
+        !connectorIdSet.has(connector.id) &&
+        !nodeIdSet.has(connector.sourceId) &&
+        !nodeIdSet.has(connector.targetId)
+      )
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+    setSelection({ type: null })
+  }
+
+  const handleCutSelection = () => {
+    handleCopySelection()
+    deleteSelection()
+  }
+
+  const handlePaste = (position?: Position) => {
+    if (!editorClipboard || editorClipboard.nodes.length === 0) return
+
+    const minX = Math.min(...editorClipboard.nodes.map(node => node.position.x))
+    const minY = Math.min(...editorClipboard.nodes.map(node => node.position.y))
+    const pasteOrigin = position ?? { x: minX + 40, y: minY + 40 }
+    const idPrefix = `paste-${Date.now()}`
+    const idMap = new Map<string, string>()
+    const pastedNodes = editorClipboard.nodes.map((node, index) => {
+      const newId = `${idPrefix}-node-${index + 1}`
+      idMap.set(node.id, newId)
+
+      return {
+        ...node,
+        id: newId,
+        title: `${node.title} Copy`,
+        position: {
+          x: pasteOrigin.x + (node.position.x - minX),
+          y: pasteOrigin.y + (node.position.y - minY)
+        },
+        linkedDiagramId: undefined,
+        childDiagramId: undefined
+      }
+    })
+    const pastedConnectors = editorClipboard.connectors
+      .filter(connector => idMap.has(connector.sourceId) && idMap.has(connector.targetId))
+      .map((connector, index) => ({
+        ...connector,
+        id: `${idPrefix}-conn-${index + 1}`,
+        sourceId: idMap.get(connector.sourceId)!,
+        targetId: idMap.get(connector.targetId)!
+      }))
+    const updatedDiagram = {
+      ...currentDiagram,
+      nodes: [...currentDiagram.nodes, ...pastedNodes],
+      connectors: [...currentDiagram.connectors, ...pastedConnectors]
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+    setSelection({
+      type: 'multi',
+      nodeIds: pastedNodes.map(node => node.id),
+      connectorIds: pastedConnectors.map(connector => connector.id)
+    })
+  }
+
+  const handleCreateDiagramNote = (position: Position) => {
+    const newNode: DiagramNode = {
+      id: `note-${Date.now()}`,
+      type: 'shape_sticky_note',
+      title: 'Diagram note',
+      description: 'Add notes, assumptions, or context here.',
+      position,
+      width: 220,
+      height: 140,
+      status: 'inferred'
+    }
+    const updatedDiagram = {
+      ...currentDiagram,
+      nodes: [...currentDiagram.nodes, newNode]
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+    setSelection({ type: 'node', id: newNode.id })
+  }
+
+  const handleToolChange = (tool: string) => {
+    if (tool === 'organize') {
+      setIsPresentationMode(false)
+      handleAutoOrganize()
+      return
+    }
+
+    if (tool === 'present') {
+      const nextPresentationMode = !isPresentationMode
+      setIsPresentationMode(nextPresentationMode)
+      setActiveTool(nextPresentationMode ? 'present' : 'select')
+      setSelection({ type: null })
+      setProjectMessage(nextPresentationMode ? 'Presentation mode enabled.' : 'Presentation mode disabled.')
+      return
+    }
+
+    setIsPresentationMode(false)
+    setActiveTool(tool)
+  }
 
   const handleAddNode = (type: string, position: Position = { x: 400, y: 300 }) => {
     const nodeTitle = formatNodeTitle(type)
@@ -293,15 +494,59 @@ export default function App() {
     setSelection({ type: null })
   }
 
+  const handleUpdateConnector = (connectorId: string, updates: Partial<DiagramConnector>) => {
+    const updatedDiagram = {
+      ...currentDiagram,
+      connectors: currentDiagram.connectors.map(connector =>
+        connector.id === connectorId ? { ...connector, ...updates } : connector
+      )
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+  }
+
+  const handleReverseConnector = (connectorId: string) => {
+    const connector = currentDiagram.connectors.find(c => c.id === connectorId)
+    if (!connector) return
+
+    const updatedDiagram = {
+      ...currentDiagram,
+      connectors: currentDiagram.connectors.map(current =>
+        current.id === connectorId
+          ? { ...current, sourceId: current.targetId, targetId: current.sourceId, direction: 'reversed' }
+          : current
+      )
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+    setSelection({ type: 'connector', id: connectorId })
+  }
+
   const handleAddConnector = (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return
+
+    const connectorType = 'related_to' as const
+    const connectorLabel = 'Related to'
+    const existingConnector = currentDiagram.connectors.find(connector =>
+      (connector.sourceId === sourceId && connector.targetId === targetId) ||
+      (connector.sourceId === targetId && connector.targetId === sourceId)
+    )
+
+    if (existingConnector) {
+      setSelection({ type: 'connector', id: existingConnector.id })
+      setProjectMessage('Only one connector is allowed between the same two nodes.')
+      return
+    }
 
     const newConnector = {
       id: `conn-${Date.now()}`,
       sourceId,
       targetId,
-      type: 'related_to' as const,
-      label: 'Related to',
+      type: connectorType,
+      label: connectorLabel,
+      lineStyle: 'dashed' as const,
+      startMarker: 'none' as const,
+      endMarker: 'arrow' as const,
       status: 'inferred' as const
     }
 
@@ -413,7 +658,13 @@ export default function App() {
     typeof value.sourceId === 'string' &&
     typeof value.targetId === 'string' &&
     typeof value.type === 'string' &&
-    (value.label === undefined || typeof value.label === 'string')
+    (value.label === undefined || typeof value.label === 'string') &&
+    (value.lineStyle === undefined || typeof value.lineStyle === 'string') &&
+    (value.startMarker === undefined || typeof value.startMarker === 'string') &&
+    (value.endMarker === undefined || typeof value.endMarker === 'string') &&
+    (value.direction === undefined || typeof value.direction === 'string') &&
+    (value.description === undefined || typeof value.description === 'string') &&
+    (value.source === undefined || typeof value.source === 'string')
 
   const isDiagram = (value: unknown): value is Diagram =>
     isRecord(value) &&
@@ -480,6 +731,72 @@ export default function App() {
     setProjectMessage('Project saved as JSON.')
   }
 
+  const getArchitectureDocumentInput = () => ({
+    projectName: 'Architecture Studio Project',
+    currentDiagram,
+    diagrams: Array.from(diagrams.values()),
+    analysisResults
+  })
+
+  const captureCurrentDiagramImage = async () => {
+    const svg = document.querySelector('[data-diagram-export-svg="true"]') as SVGSVGElement | null
+    if (!svg) return null
+
+    try {
+      const clone = svg.cloneNode(true) as SVGSVGElement
+      const width = Number(svg.getAttribute('width') ?? 2000)
+      const height = Number(svg.getAttribute('height') ?? 1500)
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+      clone.setAttribute('width', String(width))
+      clone.setAttribute('height', String(height))
+      clone.setAttribute('viewBox', `0 0 ${width} ${height}`)
+      clone.removeAttribute('style')
+
+      const serialized = new XMLSerializer().serializeToString(clone)
+      const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+
+      return await new Promise<string | null>(resolve => {
+        const image = new Image()
+        image.onload = () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const context = canvas.getContext('2d')
+          if (!context) {
+            URL.revokeObjectURL(url)
+            resolve(null)
+            return
+          }
+
+          context.fillStyle = '#ffffff'
+          context.fillRect(0, 0, width, height)
+          context.drawImage(image, 0, 0)
+          URL.revokeObjectURL(url)
+          resolve(canvas.toDataURL('image/png'))
+        }
+        image.onerror = () => {
+          URL.revokeObjectURL(url)
+          resolve(null)
+        }
+        image.src = url
+      })
+    } catch {
+      return null
+    }
+  }
+
+  const handleExportDocx = async () => {
+    const diagramImageDataUrl = await captureCurrentDiagramImage()
+    exportArchitectureDocx({ ...getArchitectureDocumentInput(), diagramImageDataUrl })
+    setProjectMessage('Architecture documentation exported as DOCX.')
+  }
+
+  const handlePrintPdf = async () => {
+    const diagramImageDataUrl = await captureCurrentDiagramImage()
+    openPrintableArchitectureDocument({ ...getArchitectureDocumentInput(), diagramImageDataUrl })
+  }
+
   const handleLoadProjectClick = () => {
     fileInputRef.current?.click()
   }
@@ -526,7 +843,7 @@ export default function App() {
       {/* Toolbar */}
       <Toolbar
         activeTool={activeTool}
-        onToolChange={setActiveTool}
+        onToolChange={handleToolChange}
         currentDiagramName={currentDiagram.name}
         parentDiagramName={parentDiagram?.name ?? currentDiagramItem.parentNodeTitle}
         canGoBack={canGoBack}
@@ -535,6 +852,8 @@ export default function App() {
         onAnalyzeProcess={handleAnalyzeProcess}
         onSaveProject={handleSaveProject}
         onLoadProject={handleLoadProjectClick}
+        onExportDocx={handleExportDocx}
+        onPrintPdf={handlePrintPdf}
       />
       <input
         ref={fileInputRef}
@@ -558,21 +877,24 @@ export default function App() {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Diagram navigation and component library */}
-        <div className="w-80 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
-          <DiagramExplorer
-            diagrams={Array.from(diagrams.values())}
-            currentDiagramId={currentDiagram.id}
-            onSelectDiagram={handleSelectDiagram}
-            className="w-full h-56 border-b border-gray-200"
-          />
-          <ComponentLibrary
-            onAddNode={handleAddNode}
-            className="w-full flex-1 min-h-0"
-          />
-        </div>
+        {!isPresentationMode && (
+          <div className="w-80 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
+            <DiagramExplorer
+              diagrams={Array.from(diagrams.values())}
+              currentDiagramId={currentDiagram.id}
+              onSelectDiagram={handleSelectDiagram}
+              className="w-full h-56 border-b border-gray-200"
+            />
+            <ComponentLibrary
+              onAddNode={handleAddNode}
+              className="w-full flex-1 min-h-0"
+            />
+          </div>
+        )}
 
         {/* Center: Diagram Canvas */}
         <DiagramCanvas
+          activeTool={activeTool}
           nodes={currentDiagram.nodes}
           connectors={currentDiagram.connectors}
           selection={selection}
@@ -587,7 +909,16 @@ export default function App() {
           onCreateChildDiagram={handleCreateChildDiagram}
           onDeleteNode={handleDeleteNode}
           onDeleteConnector={handleDeleteConnector}
+          onDeleteSelection={deleteSelection}
           onAddConnector={handleAddConnector}
+          onReverseConnector={handleReverseConnector}
+          onCopySelection={handleCopySelection}
+          onCutSelection={handleCutSelection}
+          onPaste={handlePaste}
+          onSelectAll={handleSelectAll}
+          onAutoOrganize={handleAutoOrganize}
+          onCreateDiagramNote={handleCreateDiagramNote}
+          hasClipboard={Boolean(editorClipboard?.nodes.length)}
           isQuickCreateOpen={isAiInputOpen}
           quickCreateText={quickCreateText}
           onOpenQuickCreate={() => setIsAiInputOpen(true)}
@@ -599,17 +930,21 @@ export default function App() {
         />
 
         {/* Right: Inspector */}
-        <Inspector
-          selection={selection}
-          nodes={currentDiagram.nodes}
-          connectors={currentDiagram.connectors}
-          onClearSelection={() => setSelection({ type: null })}
-          onOpenDiagram={handleOpenDiagram}
-          onCreateChildDiagram={handleCreateChildDiagram}
-          analysisResults={analysisResults}
-          analysisMessage={analysisMessage}
-          onSelectAnalysisResult={handleSelectAnalysisResult}
-        />
+        {!isPresentationMode && (
+          <Inspector
+            selection={selection}
+            nodes={currentDiagram.nodes}
+            connectors={currentDiagram.connectors}
+            onClearSelection={() => setSelection({ type: null })}
+            onOpenDiagram={handleOpenDiagram}
+            onCreateChildDiagram={handleCreateChildDiagram}
+            onUpdateConnector={handleUpdateConnector}
+            onReverseConnector={handleReverseConnector}
+            analysisResults={analysisResults}
+            analysisMessage={analysisMessage}
+            onSelectAnalysisResult={handleSelectAnalysisResult}
+          />
+        )}
       </div>
     </div>
   )
