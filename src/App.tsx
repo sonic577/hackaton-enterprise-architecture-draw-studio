@@ -1,12 +1,15 @@
 import { useRef, useState } from 'react'
 import Toolbar from './components/Layout/Toolbar'
 import ComponentLibrary from './components/Layout/ComponentLibrary'
-import { DiagramExplorer } from './components/Layout/DiagramExplorer'
+import { DiagramExplorer, DiagramTreeItem } from './components/Layout/DiagramExplorer'
 import DiagramCanvas from './components/Layout/DiagramCanvas'
 import Inspector from './components/Layout/Inspector'
 import { mockDiagrams, rootDiagram } from './data/mockData'
 import { createComponentMetadata } from './data/componentDefinitions'
 import { generateDiagramFromText } from './utils/mockDiagramGenerator'
+import { parseFoundryResponse } from './utils/foundryResponseParser'
+import { analyzeArchitecture } from './utils/analyzeArchitectureApi'
+import { isLongBusinessCaseInput, quickCaptureIntentToAnalysisResponse } from './utils/quickCaptureIntent'
 import { analyzeProcess, ProcessAnalysisResult } from './utils/processAnalyzer'
 import { exportArchitectureDocx, openPrintableArchitectureDocument } from './utils/documentExport'
 import { Selection, Diagram, DiagramNode, DiagramConnector, Position } from './types'
@@ -27,6 +30,7 @@ interface SavedProject {
   }
   currentDiagramId: string
   diagrams: Diagram[]
+  diagramTree?: DiagramTreeItem[]
 }
 
 interface InternalClipboard {
@@ -35,6 +39,33 @@ interface InternalClipboard {
 }
 
 const PROJECT_SCHEMA_VERSION = 1
+
+const initialDiagramTree: DiagramTreeItem[] = [
+  { id: 'folder-enterprise', kind: 'folder', name: 'Enterprise Architecture', expanded: true },
+  { id: 'tree-diagram-root', kind: 'diagram', name: rootDiagram.name, diagramId: rootDiagram.id, parentId: 'folder-enterprise' },
+  {
+    id: 'tree-diagram-account-provisioning',
+    kind: 'diagram',
+    name: 'Account Provisioning',
+    diagramId: 'diagram-account-provisioning',
+    parentId: 'folder-enterprise',
+    parentNodeId: 'node-process-1',
+    linkedFromNodeId: 'node-process-1'
+  }
+]
+
+const createDefaultDiagramTree = (sourceDiagrams: Diagram[]): DiagramTreeItem[] => [
+  { id: 'folder-enterprise', kind: 'folder', name: 'Enterprise Architecture', expanded: true },
+  ...sourceDiagrams.map(diagram => ({
+    id: `tree-${diagram.id}`,
+    kind: 'diagram' as const,
+    name: diagram.name,
+    diagramId: diagram.id,
+    parentId: 'folder-enterprise',
+    parentNodeId: diagram.parentNodeId,
+    linkedFromNodeId: diagram.parentNodeId
+  }))
+]
 
 export default function App() {
   // Map of all diagrams by ID
@@ -65,6 +96,7 @@ export default function App() {
   const [analysisMessage, setAnalysisMessage] = useState<string | null>(null)
   const [highlightedAnalysisNodeIds, setHighlightedAnalysisNodeIds] = useState<string[]>([])
   const [editorClipboard, setEditorClipboard] = useState<InternalClipboard | null>(null)
+  const [diagramTree, setDiagramTree] = useState<DiagramTreeItem[]>(initialDiagramTree)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleSelectNode = (nodeId: string) => {
@@ -409,6 +441,18 @@ export default function App() {
       parentNodeTitle: node.title
     })
     setDiagramStack(newStack)
+    setDiagramTree(current => [
+      ...current.map(item => item.id === getCurrentTreeFolderId() && item.kind === 'folder' ? { ...item, expanded: true } : item),
+      {
+        id: `tree-${linkedDiagramId}`,
+        kind: 'diagram',
+        name: childDiagram.name,
+        diagramId: linkedDiagramId,
+        parentId: getCurrentTreeFolderId(),
+        parentNodeId: node.id,
+        linkedFromNodeId: node.id
+      }
+    ])
     setSelection({ type: null })
   }
 
@@ -565,42 +609,183 @@ export default function App() {
     setSelection({ type: 'connector', id: newConnector.id })
   }
 
-  const handleGenerateDiagram = () => {
+  const handleGenerateDiagram = async () => {
     const input = quickCreateText.trim()
     if (!input) return
 
-    const result = generateDiagramFromText(input)
-    const existingBottom = currentDiagram.nodes.reduce(
-      (maxY, node) => Math.max(maxY, node.position.y + (node.height ?? 120)),
-      0
-    )
-    const generatedTop = result.nodes.reduce(
-      (minY, node) => Math.min(minY, node.position.y),
-      Number.POSITIVE_INFINITY
-    )
-    const yOffset = existingBottom > 0 ? existingBottom + 160 - generatedTop : 0
-    const generatedNodes = result.nodes.map(node => ({
-      ...node,
-      position: {
-        x: node.position.x,
-        y: node.position.y + yOffset
+    const appendGeneratedData = (
+      nodes: DiagramNode[],
+      connectors: DiagramConnector[],
+      message: string,
+      analysis: ProcessAnalysisResult[] = [],
+      childDiagrams: Diagram[] = []
+    ) => {
+      const existingBottom = currentDiagram.nodes.reduce(
+        (maxY, node) => Math.max(maxY, node.position.y + (node.height ?? 120)),
+        0
+      )
+      const generatedTop = nodes.reduce(
+        (minY, node) => Math.min(minY, node.position.y),
+        Number.POSITIVE_INFINITY
+      )
+      const yOffset = existingBottom > 0 && Number.isFinite(generatedTop)
+        ? existingBottom + 160 - generatedTop
+        : 0
+      const generatedNodes = nodes.map(node => ({
+        ...node,
+        position: {
+          x: node.position.x,
+          y: node.position.y + yOffset
+        }
+      }))
+      const updatedDiagram = {
+        ...currentDiagram,
+        nodes: [...currentDiagram.nodes, ...generatedNodes],
+        connectors: [...currentDiagram.connectors, ...connectors]
       }
-    }))
-    const updatedDiagram = {
-      ...currentDiagram,
-      nodes: [...currentDiagram.nodes, ...generatedNodes],
-      connectors: [...currentDiagram.connectors, ...result.connectors]
+
+      if (childDiagrams.length > 0) {
+        const newDiagrams = new Map(diagrams)
+        newDiagrams.set(currentDiagram.id, updatedDiagram)
+        childDiagrams.forEach(diagram => {
+          newDiagrams.set(diagram.id, {
+            ...diagram,
+            parentId: currentDiagram.id
+          })
+        })
+        setDiagrams(newDiagrams)
+
+        const newStack = [...diagramStack]
+        newStack[newStack.length - 1].diagram = updatedDiagram
+        setDiagramStack(newStack)
+        setDiagramTree(current => {
+          const parentFolderId = getCurrentTreeFolderId()
+          const existingDiagramIds = new Set(current.filter(item => item.kind === 'diagram').map(item => item.kind === 'diagram' ? item.diagramId : ''))
+          return [
+            ...current.map(item => item.id === parentFolderId && item.kind === 'folder' ? { ...item, expanded: true } : item),
+            ...childDiagrams
+              .filter(diagram => !existingDiagramIds.has(diagram.id))
+              .map(diagram => ({
+                id: `tree-${diagram.id}`,
+                kind: 'diagram' as const,
+                name: diagram.name,
+                diagramId: diagram.id,
+                parentId: parentFolderId,
+                parentNodeId: diagram.parentNodeId,
+                linkedFromNodeId: diagram.parentNodeId
+              }))
+          ]
+        })
+      } else {
+        updateCurrentDiagram(updatedDiagram)
+      }
+      if (analysis.length > 0) {
+        setAnalysisResults(analysis)
+        setAnalysisMessage(null)
+        setHighlightedAnalysisNodeIds([])
+      }
+      setSelection(analysis.length > 0 ? { type: null } : generatedNodes[0] ? { type: 'node', id: generatedNodes[0].id } : { type: null })
+      setQuickCreateText('')
+      setIsAiInputOpen(false)
+      setProjectMessage(message)
     }
 
-    const newDiagrams = new Map(diagrams)
-    newDiagrams.set(currentDiagram.id, updatedDiagram)
-    setDiagrams(newDiagrams)
+    const appendLocalMock = (notice?: string) => {
+      const intentResponse = quickCaptureIntentToAnalysisResponse(input, currentDiagram)
+      const hasConfidentIntent = intentResponse.nodes.some(node => node.type !== 'Generated Summary')
 
-    const newStack = [...diagramStack]
-    newStack[newStack.length - 1].diagram = updatedDiagram
-    setDiagramStack(newStack)
-    setSelection(generatedNodes[0] ? { type: 'node', id: generatedNodes[0].id } : { type: null })
-    setQuickCreateText('')
+      if (hasConfidentIntent) {
+        const parsedIntent = parseFoundryResponse(JSON.stringify(intentResponse))
+        if (parsedIntent.kind === 'valid') {
+          appendGeneratedData(
+            parsedIntent.data.nodes,
+            parsedIntent.data.connectors,
+            notice ?? `Created ${parsedIntent.data.nodes[0]?.title ?? 'diagram element'} from Quick Capture intent.`,
+            parsedIntent.data.analysisResults,
+            parsedIntent.data.diagrams
+          )
+          return
+        }
+      }
+
+      const result = generateDiagramFromText(input)
+      appendGeneratedData(
+        result.nodes,
+        result.connectors,
+        notice ?? `Generated ${result.nodes.length} node${result.nodes.length === 1 ? '' : 's'} locally.`
+      )
+    }
+
+    const isSingleGiantNodeResult = (nodes: DiagramNode[]) =>
+      isLongBusinessCaseInput(input) &&
+      nodes.length <= 1 &&
+      nodes.some(node => `${node.title} ${node.description ?? ''}`.length > 320)
+
+    const isTangledArchitectureResult = (nodes: DiagramNode[], connectors: DiagramConnector[]) => {
+      if (!isLongBusinessCaseInput(input)) return false
+
+      const currentProcess = nodes.find(node =>
+        `${node.title} ${node.type}`.toLowerCase().includes('current process')
+      )
+      const processDegree = currentProcess
+        ? connectors.filter(connector => connector.sourceId === currentProcess.id || connector.targetId === currentProcess.id).length
+        : 0
+      const hasOperationalDetailOnMainCanvas = nodes.some(node => {
+        const text = `${node.type} ${node.title} ${node.bpmnType ?? ''} ${node.category ?? ''}`.toLowerCase()
+        return (
+          text.includes('process step') ||
+          text.includes('actor') ||
+          text.includes('lane') ||
+          text.includes('gateway') ||
+          text.includes('start event') ||
+          text.includes('end event') ||
+          text.includes('user task') ||
+          text.includes('service task')
+        )
+      })
+
+      return processDegree > 3 || hasOperationalDetailOnMainCanvas
+    }
+
+    const foundryResult = parseFoundryResponse(input)
+    if (foundryResult.kind === 'invalid') {
+      setProjectMessage(foundryResult.error)
+      return
+    }
+
+    if (foundryResult.kind === 'valid') {
+      appendGeneratedData(
+        foundryResult.data.nodes,
+        foundryResult.data.connectors,
+        `Imported Foundry response: ${foundryResult.data.nodes.length} node${foundryResult.data.nodes.length === 1 ? '' : 's'} and ${foundryResult.data.connectors.length} connector${foundryResult.data.connectors.length === 1 ? '' : 's'} created.`,
+        foundryResult.data.analysisResults,
+        foundryResult.data.diagrams
+      )
+      return
+    }
+
+    try {
+      const response = await analyzeArchitecture(input, currentDiagram)
+      const parsed = parseFoundryResponse(JSON.stringify(response))
+
+      if (parsed.kind !== 'valid') {
+        throw new Error(parsed.kind === 'invalid' ? parsed.error : 'Architecture analysis returned no diagram data.')
+      }
+
+      if (isSingleGiantNodeResult(parsed.data.nodes) || isTangledArchitectureResult(parsed.data.nodes, parsed.data.connectors)) {
+        throw new Error('Architecture analysis returned an oversized or tangled main diagram.')
+      }
+
+      appendGeneratedData(
+        parsed.data.nodes,
+        parsed.data.connectors,
+        `Generated ${parsed.data.nodes.length} node${parsed.data.nodes.length === 1 ? '' : 's'} from architecture analysis.`,
+        parsed.data.analysisResults,
+        parsed.data.diagrams
+      )
+    } catch {
+      appendLocalMock('Using local mock analysis because Foundry was unavailable.')
+    }
   }
 
   const handleSelectDiagram = (diagramId: string) => {
@@ -609,6 +794,158 @@ export default function App() {
 
     setDiagramStack(buildDiagramStack(diagram, diagrams))
     setSelection({ type: null })
+  }
+
+  const getCurrentTreeFolderId = () => {
+    const currentItem = diagramTree.find(item => item.kind === 'diagram' && item.diagramId === currentDiagram.id)
+    const parentItem = currentItem?.parentId ? diagramTree.find(item => item.id === currentItem.parentId) : undefined
+    return parentItem?.kind === 'folder' ? parentItem.id : undefined
+  }
+
+  const handleToggleDiagramFolder = (folderId: string) => {
+    setDiagramTree(current => current.map(item =>
+      item.id === folderId && item.kind === 'folder' ? { ...item, expanded: !item.expanded } : item
+    ))
+  }
+
+  const handleAddDiagramFolder = (parentId?: string) => {
+    const name = window.prompt('Folder name', 'New Folder')?.trim()
+    if (!name) return
+
+    const id = `folder-${Date.now()}`
+    setDiagramTree(current => [
+      ...current.map(item => item.id === parentId && item.kind === 'folder' ? { ...item, expanded: true } : item),
+      { id, kind: 'folder', name, parentId, expanded: true }
+    ])
+  }
+
+  const handleAddDiagramFromTree = (parentId?: string) => {
+    const name = window.prompt('Diagram name', 'New Diagram')?.trim()
+    if (!name) return
+
+    const newDiagram: Diagram = {
+      id: `diagram-${Date.now()}`,
+      name,
+      nodes: [],
+      connectors: []
+    }
+    const newDiagrams = new Map(diagrams)
+    newDiagrams.set(newDiagram.id, newDiagram)
+    setDiagrams(newDiagrams)
+    setDiagramTree(current => [
+      ...current.map(item => item.id === parentId && item.kind === 'folder' ? { ...item, expanded: true } : item),
+      { id: `tree-${newDiagram.id}`, kind: 'diagram', name, diagramId: newDiagram.id, parentId }
+    ])
+    setDiagramStack([{ diagram: newDiagram }])
+    setSelection({ type: null })
+  }
+
+  const handleRenameDiagramTreeItem = (itemId: string) => {
+    const item = diagramTree.find(candidate => candidate.id === itemId)
+    if (!item) return
+
+    const name = window.prompt('New name', item.name)?.trim()
+    if (!name) return
+
+    setDiagramTree(current => current.map(candidate =>
+      candidate.id === itemId ? { ...candidate, name } : candidate
+    ))
+
+    if (item.kind === 'diagram') {
+      const diagram = diagrams.get(item.diagramId)
+      if (!diagram) return
+
+      const renamedDiagram = { ...diagram, name }
+      const newDiagrams = new Map(diagrams)
+      newDiagrams.set(item.diagramId, renamedDiagram)
+      setDiagrams(newDiagrams)
+      setDiagramStack(current => current.map(stackItem =>
+        stackItem.diagram.id === item.diagramId ? { ...stackItem, diagram: renamedDiagram } : stackItem
+      ))
+    }
+  }
+
+  const collectTreeDescendants = (itemId: string, items: DiagramTreeItem[]) => {
+    const ids = new Set<string>([itemId])
+    let changed = true
+
+    while (changed) {
+      changed = false
+      items.forEach(item => {
+        if (item.parentId && ids.has(item.parentId) && !ids.has(item.id)) {
+          ids.add(item.id)
+          changed = true
+        }
+      })
+    }
+
+    return ids
+  }
+
+  const deleteDiagramIds = (diagramIds: Set<string>) => {
+    const newDiagrams = new Map(diagrams)
+    diagramIds.forEach(id => newDiagrams.delete(id))
+    const fallbackDiagram = Array.from(newDiagrams.values())[0]
+
+    setDiagrams(newDiagrams)
+    if (diagramIds.has(currentDiagram.id) && fallbackDiagram) {
+      setDiagramStack([{ diagram: fallbackDiagram }])
+      setSelection({ type: null })
+    }
+  }
+
+  const handleDeleteDiagramTreeItem = (itemId: string) => {
+    const item = diagramTree.find(candidate => candidate.id === itemId)
+    if (!item) return
+    if (!window.confirm(`Delete "${item.name}"?`)) return
+
+    const idsToDelete = item.kind === 'folder' ? collectTreeDescendants(itemId, diagramTree) : new Set([itemId])
+    const diagramIdsToDelete = new Set(
+      diagramTree
+        .filter(candidate => idsToDelete.has(candidate.id) && candidate.kind === 'diagram')
+        .map(candidate => candidate.kind === 'diagram' ? candidate.diagramId : '')
+        .filter(Boolean)
+    )
+    if (diagramIdsToDelete.size >= diagrams.size) {
+      setProjectMessage('At least one diagram must remain in the project.')
+      return
+    }
+
+    setDiagramTree(current => current.filter(candidate => !idsToDelete.has(candidate.id)))
+    if (diagramIdsToDelete.size > 0) deleteDiagramIds(diagramIdsToDelete)
+  }
+
+  const handleDuplicateDiagramTreeItem = (itemId: string) => {
+    const item = diagramTree.find(candidate => candidate.id === itemId)
+    if (!item || item.kind !== 'diagram') return
+
+    const diagram = diagrams.get(item.diagramId)
+    if (!diagram) return
+
+    const newId = `diagram-${Date.now()}`
+    const duplicatedDiagram: Diagram = {
+      ...diagram,
+      id: newId,
+      name: `${diagram.name} Copy`,
+      parentId: undefined,
+      parentNodeId: undefined,
+      nodes: diagram.nodes.map(node => ({ ...node, linkedDiagramId: undefined, childDiagramId: undefined })),
+      connectors: diagram.connectors.map(connector => ({ ...connector }))
+    }
+    const newDiagrams = new Map(diagrams)
+    newDiagrams.set(newId, duplicatedDiagram)
+    setDiagrams(newDiagrams)
+    setDiagramTree(current => [
+      ...current,
+      {
+        id: `tree-${newId}`,
+        kind: 'diagram',
+        name: duplicatedDiagram.name,
+        diagramId: newId,
+        parentId: item.parentId,
+        diagramType: item.diagramType
+      }
+    ])
   }
 
   const buildDiagramStack = (diagram: Diagram, sourceDiagrams: Map<string, Diagram>) => {
@@ -677,6 +1014,23 @@ export default function App() {
     Array.isArray(value.connectors) &&
     value.connectors.every(isDiagramConnector)
 
+  const isDiagramTreeItem = (value: unknown): value is DiagramTreeItem =>
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.kind === 'string' &&
+    typeof value.name === 'string' &&
+    (value.parentId === undefined || typeof value.parentId === 'string') &&
+    (
+      (value.kind === 'folder' && typeof value.expanded === 'boolean') ||
+      (
+        value.kind === 'diagram' &&
+        typeof value.diagramId === 'string' &&
+        (value.diagramType === undefined || typeof value.diagramType === 'string') &&
+        (value.parentNodeId === undefined || typeof value.parentNodeId === 'string') &&
+        (value.linkedFromNodeId === undefined || typeof value.linkedFromNodeId === 'string')
+      )
+    )
+
   const parseSavedProject = (value: unknown): SavedProject | null => {
     if (!isRecord(value)) return null
     if (value.projectSchemaVersion !== PROJECT_SCHEMA_VERSION) return null
@@ -690,6 +1044,7 @@ export default function App() {
     if (typeof value.currentDiagramId !== 'string') return null
     if (!Array.isArray(value.diagrams) || !value.diagrams.every(isDiagram)) return null
     if (!value.diagrams.some(diagram => diagram.id === value.currentDiagramId)) return null
+    if (value.diagramTree !== undefined && (!Array.isArray(value.diagramTree) || !value.diagramTree.every(isDiagramTreeItem))) return null
 
     return {
       projectSchemaVersion: value.projectSchemaVersion,
@@ -700,7 +1055,8 @@ export default function App() {
         savedAt: value.metadata.savedAt
       },
       currentDiagramId: value.currentDiagramId,
-      diagrams: value.diagrams
+      diagrams: value.diagrams,
+      diagramTree: value.diagramTree
     }
   }
 
@@ -714,7 +1070,8 @@ export default function App() {
         savedAt: new Date().toISOString()
       },
       currentDiagramId: currentDiagram.id,
-      diagrams: Array.from(diagrams.values())
+      diagrams: Array.from(diagrams.values()),
+      diagramTree
     }
     const json = JSON.stringify(project, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
@@ -823,6 +1180,7 @@ export default function App() {
       }
 
       setDiagrams(loadedDiagrams)
+      setDiagramTree(parsed.diagramTree ?? createDefaultDiagramTree(parsed.diagrams))
       setDiagramStack(buildDiagramStack(loadedCurrentDiagram, loadedDiagrams))
       setSelection({ type: null })
       setProjectMessage(`Loaded ${parsed.metadata.name}.`)
@@ -881,8 +1239,15 @@ export default function App() {
           <div className="w-80 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
             <DiagramExplorer
               diagrams={Array.from(diagrams.values())}
+              treeItems={diagramTree}
               currentDiagramId={currentDiagram.id}
               onSelectDiagram={handleSelectDiagram}
+              onToggleFolder={handleToggleDiagramFolder}
+              onAddFolder={handleAddDiagramFolder}
+              onAddDiagram={handleAddDiagramFromTree}
+              onRenameItem={handleRenameDiagramTreeItem}
+              onDeleteItem={handleDeleteDiagramTreeItem}
+              onDuplicateDiagram={handleDuplicateDiagramTreeItem}
               className="w-full h-56 border-b border-gray-200"
             />
             <ComponentLibrary

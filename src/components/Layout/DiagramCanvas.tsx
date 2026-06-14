@@ -53,7 +53,7 @@ interface CanvasProps {
   onOpenQuickCreate?: () => void
   onCloseQuickCreate?: () => void
   onQuickCreateTextChange?: (text: string) => void
-  onGenerateDiagram?: () => void
+  onGenerateDiagram?: () => void | Promise<void>
   highlightedNodeIds?: string[]
   issueNodeIds?: string[]
 }
@@ -114,6 +114,7 @@ export default function Canvas({
     start: Position
     end: Position
   } | null>(null)
+  const [isQuickCreateSubmitting, setIsQuickCreateSubmitting] = useState(false)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const quickCreateInputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -816,10 +817,16 @@ export default function Canvas({
     setPan({ x: 0, y: 0 })
   }
 
-  const handleGenerateFromQuickCreate = () => {
-    if (!quickCreateText.trim()) return
-    onGenerateDiagram?.()
-    onCloseQuickCreate?.()
+  const handleGenerateFromQuickCreate = async () => {
+    if (!quickCreateText.trim() || isQuickCreateSubmitting) return
+
+    setIsQuickCreateSubmitting(true)
+    try {
+      await onGenerateDiagram?.()
+    } finally {
+      setIsQuickCreateSubmitting(false)
+      quickCreateInputRef.current?.focus()
+    }
   }
 
   const resizeQuickCreateInput = () => {
@@ -1331,21 +1338,24 @@ export default function Canvas({
                   if (e.key === 'Escape') {
                     e.preventDefault()
                     onCloseQuickCreate?.()
+                    return
                   }
 
-                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  if (e.key === 'Enter') {
+                    if (e.shiftKey) return
+
                     e.preventDefault()
-                    handleGenerateFromQuickCreate()
+                    void handleGenerateFromQuickCreate()
                   }
                 }}
                 className="max-h-[72px] min-h-[36px] flex-1 resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 py-2 text-sm text-gray-800 outline-none"
                 placeholder="Describe a process, gap, mission, or architecture..."
               />
               <button
-                onClick={handleGenerateFromQuickCreate}
-                disabled={!quickCreateText.trim()}
+                onClick={() => void handleGenerateFromQuickCreate()}
+                disabled={!quickCreateText.trim() || isQuickCreateSubmitting}
                 className="mb-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                title="Generate"
+                title={isQuickCreateSubmitting ? 'Generating...' : 'Generate'}
               >
                 <Send className="h-4 w-4" />
               </button>
