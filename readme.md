@@ -291,6 +291,10 @@ Coming soon
 * Improved BPMN validation.
 * Version history for architecture projects.
 
+## Video
+
+The project demo video is available here: https://youtu.be/ygZ4kHxFrJg
+
 ## License
 
 MIT
