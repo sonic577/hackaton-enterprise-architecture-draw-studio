@@ -191,6 +191,8 @@ If Foundry returns markdown or extra text around the JSON, the server attempts t
 
 If Foundry fails or is not configured, the application falls back to a local mock response so the demo remains functional.
 
+The Enterprise Architecture Reasoning Agent prompt is documented in `docs/enterprise-architecture-reasoning-agent-prompt.md`.
+
 ## Project Architecture
 
 ```text
