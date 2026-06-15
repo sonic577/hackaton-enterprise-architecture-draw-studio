@@ -1,5 +1,6 @@
 import type { ConnectorType, Diagram, DiagramConnector, DiagramNode } from '../types'
 import type { ProcessAnalysisResult } from './processAnalyzer'
+import { layoutBpmnView } from './bpmnLayout'
 
 interface FoundryNode {
   id?: unknown
@@ -12,6 +13,10 @@ interface FoundryNode {
   evidence?: unknown
   properties?: unknown
   linkedDiagramId?: unknown
+  linkedDiagramName?: unknown
+  focusNodeIds?: unknown
+  navigationLabel?: unknown
+  architectureAnnotations?: unknown
   bpmnType?: unknown
   category?: unknown
   width?: unknown
@@ -265,6 +270,8 @@ const normalizeNodeType = (type: string, layer: string, name = '', description =
     typeAndLayer.includes('bpmn') ||
     typeAndLayer.includes('gateway') ||
     typeAndLayer.includes('event') ||
+    typeSlug === 'task' ||
+    typeSlug.endsWith('_task') ||
     typeAndLayer.includes(' task') ||
     typeAndLayer.includes('lane') ||
     typeAndLayer.includes('pool')
@@ -314,6 +321,33 @@ const normalizeProperties = (value: unknown) => {
   }, {})
 }
 
+const normalizeArchitectureAnnotations = (value: unknown) => {
+  if (!Array.isArray(value)) return undefined
+
+  const annotations = value.flatMap((item, index) => {
+    if (!isRecord(item)) return []
+
+    const title = toStringValue(item.title)
+    const text = toStringValue(item.text)
+    const targetDiagramId = toStringValue(item.targetDiagramId)
+
+    if (!title || !text || !targetDiagramId) return []
+
+    return [{
+      id: toStringValue(item.id, `annotation-${index + 1}`),
+      title,
+      text,
+      targetDiagramId,
+      targetNodeIds: Array.isArray(item.targetNodeIds)
+        ? item.targetNodeIds.filter(nodeId => typeof nodeId === 'string')
+        : undefined,
+      icon: toStringValue(item.icon) || undefined
+    }]
+  })
+
+  return annotations.length > 0 ? annotations : undefined
+}
+
 const normalizeConnectorType = (value: string): ConnectorType => {
   const normalized = slug(value)
   const supported: ConnectorType[] = [
@@ -326,10 +360,12 @@ const normalizeConnectorType = (value: string): ConnectorType => {
     'consumes',
     'produces',
     'flow',
+    'sequence_flow',
     'association'
   ]
 
   if (normalized === 'related' || normalized === 'relatedto') return 'related_to'
+  if (normalized === 'sequenceflow') return 'sequence_flow'
   if (supported.includes(normalized as ConnectorType)) return normalized as ConnectorType
   return 'related_to'
 }
@@ -441,49 +477,28 @@ const applyColumnLayout = (
   })
 }
 
-const laneNameFor = (entry: { node: DiagramNode; rawNode: FoundryNode }) =>
-  getHint(entry.rawNode, 'laneId') ||
-  toStringValue(entry.node.properties?.laneId) ||
-  toStringValue(entry.node.properties?.actor) ||
-  entry.node.category ||
-  entry.node.layer ||
-  'Process'
-
-const applyBpmnLayout = (entries: Array<{ node: DiagramNode; rawNode: FoundryNode; index: number }>) => {
-  const laneEntries = entries.filter(entry => entry.node.type === 'bpmn_lane' || entry.node.type === 'bpmn_pool')
-  const flowEntries = sortByLayoutHints(entries.filter(entry => entry.node.type !== 'bpmn_lane' && entry.node.type !== 'bpmn_pool'))
-  const laneNames = laneEntries.length > 0
-    ? laneEntries.map(entry => entry.node.title)
-    : Array.from(new Set(flowEntries.map(laneNameFor)))
-  const laneY = (index: number) => 70 + index * 155
-  const laneByName = new Map(laneNames.map((name, index) => [name, laneY(index)]))
-  const occupied = new Set<string>()
-  const canvasWidth = Math.max(1000, 360 + flowEntries.length * 230)
-
-  laneEntries.forEach((entry, index) => {
-    entry.node.position = { x: 60, y: laneY(index) - 38 }
-    entry.node.width = Math.max(entry.node.width ?? 0, canvasWidth)
-    entry.node.height = Math.max(entry.node.height ?? 0, 140)
-  })
-
-  flowEntries.forEach((entry, index) => {
-    const lane = laneByName.get(laneNameFor(entry)) ?? laneY(index % Math.max(laneNames.length, 1))
-    applyNonOverlappingPosition(entry.node, occupied, 150 + index * 230, lane, 230, 155)
-  })
-}
-
-const applyLayoutPlan = (nodes: DiagramNode[], rawNodes: FoundryNode[], layoutPlan?: FoundryLayoutPlan) => {
+const applyLayoutPlan = (
+  nodes: DiagramNode[],
+  rawNodes: FoundryNode[],
+  connectors: DiagramConnector[],
+  layoutPlan?: FoundryLayoutPlan
+) => {
   const viewType = slug(toStringValue(layoutPlan?.viewType))
-  if (!viewType || nodes.length === 0) return nodes
+  const hasBpmnNodes = nodes.some(node => node.type.startsWith('bpmn_'))
+
+  if (nodes.length === 0) return nodes
+
+  if (viewType === 'bpmn_process' || (!viewType && hasBpmnNodes)) {
+    return layoutBpmnView({ nodes, connectors }).nodes
+  }
+
+  if (!viewType) return nodes
 
   const entries = nodes.map((node, index) => ({ node, rawNode: rawNodes[index] ?? {}, index }))
 
   switch (viewType) {
     case 'objectives_board':
       applyGridLayout(entries, 3)
-      break
-    case 'bpmn_process':
-      applyBpmnLayout(entries)
       break
     case 'layered_architecture':
       applyColumnLayout(entries, ['motivation', 'business', 'process', 'application', 'data', 'technology', 'risk', 'recommendation'])
@@ -524,7 +539,23 @@ const parseDiagramElements = (
       : typeof node.evidence === 'string'
         ? [node.evidence]
         : undefined
-    const properties = normalizeProperties(node.properties)
+    const baseProperties = normalizeProperties(node.properties) ?? {}
+    const layoutHints: Record<string, string | number | boolean> = {}
+    const order = getNumericHint(node, 'order')
+    const row = getNumericHint(node, 'row')
+    const column = getNumericHint(node, 'column')
+    const laneId = getHint(node, 'laneId')
+    const groupId = getHint(node, 'groupId')
+    const parentId = getHint(node, 'parentId')
+
+    if (order !== undefined) layoutHints.order = order
+    if (row !== undefined) layoutHints.row = row
+    if (column !== undefined) layoutHints.column = column
+    if (laneId) layoutHints.laneId = laneId
+    if (groupId) layoutHints.groupId = groupId
+    if (parentId) layoutHints.parentId = parentId
+
+    const properties = { ...baseProperties, ...layoutHints }
 
     idMap.set(oldId, newId)
 
@@ -537,7 +568,7 @@ const parseDiagramElements = (
       layer: layer || undefined,
       bpmnType: toStringValue(node.bpmnType) || undefined,
       category: toStringValue(node.category) || undefined,
-      properties: properties && Object.keys(properties).length > 0 ? properties : undefined,
+      properties: Object.keys(properties).length > 0 ? properties : undefined,
       position: getPosition(node, index),
       width: typeof node.width === 'number' ? node.width : 180,
       height: typeof node.height === 'number' ? node.height : 120,
@@ -545,7 +576,13 @@ const parseDiagramElements = (
         ? toStringValue(node.status) as DiagramNode['status']
         : 'inferred',
       evidence,
-      source: 'Foundry'
+      source: 'Foundry',
+      linkedDiagramName: toStringValue(node.linkedDiagramName) || undefined,
+      navigationLabel: toStringValue(node.navigationLabel) || undefined,
+      focusNodeIds: Array.isArray(node.focusNodeIds)
+        ? node.focusNodeIds.filter(item => typeof item === 'string')
+        : undefined,
+      architectureAnnotations: normalizeArchitectureAnnotations(node.architectureAnnotations)
     }
   })
 
@@ -582,7 +619,7 @@ const parseDiagramElements = (
     }]
   })
 
-  return { nodes: applyLayoutPlan(nodes, rawNodes, layoutPlan), connectors, idMap }
+  return { nodes: applyLayoutPlan(nodes, rawNodes, connectors, layoutPlan), connectors, idMap }
 }
 
 const analysisResult = (
@@ -599,6 +636,14 @@ const analysisResult = (
   relatedNodeIds: [],
   reasoning: 'Imported from Foundry response.',
   suggestedAction: description
+})
+
+const remapAnnotationTargets = (node: DiagramNode, diagramIdMap: Map<string, string>): DiagramNode => ({
+  ...node,
+  architectureAnnotations: node.architectureAnnotations?.map(annotation => ({
+    ...annotation,
+    targetDiagramId: diagramIdMap.get(annotation.targetDiagramId) ?? annotation.targetDiagramId
+  }))
 })
 
 export const parseFoundryResponse = (input: string): FoundryParseResult => {
@@ -643,7 +688,7 @@ export const parseFoundryResponse = (input: string): FoundryParseResult => {
     const oldLinkedDiagramId = toStringValue(node.linkedDiagramId)
 
     return {
-      ...parsedNode,
+      ...remapAnnotationTargets(parsedNode, diagramIdMap),
       linkedDiagramId: oldLinkedDiagramId ? diagramIdMap.get(oldLinkedDiagramId) : undefined
     }
   })
@@ -659,7 +704,7 @@ export const parseFoundryResponse = (input: string): FoundryParseResult => {
       id: diagramIdMap.get(toStringValue(diagram.id, `diagram-${index + 1}`)) ?? `${idPrefix}-diagram-${index + 1}`,
       name: toStringValue(diagram.name, `Generated Diagram ${index + 1}`),
       parentNodeId: oldParentNodeId ? rootElements.idMap.get(oldParentNodeId) : undefined,
-      nodes: elements.nodes,
+      nodes: elements.nodes.map(node => remapAnnotationTargets(node, diagramIdMap)),
       connectors: elements.connectors
     }
   })

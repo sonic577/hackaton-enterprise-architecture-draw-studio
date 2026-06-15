@@ -35,7 +35,7 @@ interface CanvasProps {
   onUpdateNode?: (nodeId: string, updates: Partial<DiagramNode>) => void
   onDoubleClickNode?: (node: DiagramNode) => void
   onAddNode?: (type: string, position?: Position) => void
-  onOpenDiagram?: (diagramId: string) => void
+  onOpenDiagram?: (diagramId: string, focusNodeIds?: string[]) => void
   onCreateChildDiagram?: (nodeId: string) => void
   onDeleteNode?: (nodeId: string) => void
   onDeleteConnector?: (connectorId: string) => void
@@ -127,8 +127,23 @@ export default function Canvas({
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const quickCreateInputRef = useRef<HTMLTextAreaElement>(null)
 
-  const canvasWidth = 2000
-  const canvasHeight = 1500
+  const contentBounds = nodes.reduce(
+    (bounds, node) => {
+      const nodeBounds = {
+        x: node.position.x,
+        y: node.position.y,
+        width: node.width ?? NODE_WIDTH,
+        height: node.height ?? NODE_HEIGHT
+      }
+      return {
+        width: Math.max(bounds.width, nodeBounds.x + nodeBounds.width + 240),
+        height: Math.max(bounds.height, nodeBounds.y + nodeBounds.height + 180)
+      }
+    },
+    { width: 2000, height: 1500 }
+  )
+  const canvasWidth = contentBounds.width
+  const canvasHeight = contentBounds.height
   const isConnectMode = activeTool === 'connect'
   const isPresentationMode = activeTool === 'present'
 
@@ -446,8 +461,44 @@ export default function Canvas({
     height: node.height ?? NODE_HEIGHT
   })
 
+  const getArchitectureAnnotationVisuals = () => {
+    const noteWidth = 230
+    const noteHeight = 76
+
+    return nodes.flatMap(node => {
+      if (!node.architectureAnnotations?.length) return []
+
+      const bounds = getNodeBounds(node)
+
+      return node.architectureAnnotations.map((annotation, index) => {
+        const preferAbove = bounds.y - noteHeight - 18 > 16
+        const noteX = bounds.x + Math.min(24 + index * 18, Math.max(24, bounds.width - 42))
+        const noteY = preferAbove
+          ? bounds.y - noteHeight - 18 - index * 10
+          : bounds.y + bounds.height + 18 + index * 10
+        const sourcePoint = {
+          x: bounds.x + bounds.width / 2,
+          y: preferAbove ? bounds.y : bounds.y + bounds.height
+        }
+        const targetPoint = {
+          x: noteX + 22,
+          y: preferAbove ? noteY + noteHeight : noteY
+        }
+
+        return {
+          sourceNodeId: node.id,
+          annotation,
+          noteBounds: { x: noteX, y: noteY, width: noteWidth, height: noteHeight },
+          sourcePoint,
+          targetPoint
+        }
+      })
+    })
+  }
+
   const isDrawingShape = (type: string) => type.startsWith('shape_')
   const isBpmnNode = (type: string) => type.startsWith('bpmn_')
+  const isBpmnLane = (type: string) => type === 'bpmn_lane' || type === 'bpmn_pool'
 
   const getNodeStrokeColor = (type: string, isSelected: boolean) => {
     if (isSelected) return '#3b82f6'
@@ -457,6 +508,9 @@ export default function Canvas({
     if (type.startsWith('togaf_technology_')) return '#cbd5e1'
     if (type.startsWith('togaf_motivation_')) return '#c7d2fe'
     if (type.startsWith('togaf_governance_')) return '#ddd6fe'
+    if (type === 'bpmn_start_event') return '#65a30d'
+    if (type === 'bpmn_end_event') return '#b91c1c'
+    if (type.includes('gateway')) return '#a3a300'
     if (type.startsWith('bpmn_')) return '#0284c7'
 
     switch (type) {
@@ -493,6 +547,9 @@ export default function Canvas({
     if (type === 'shape_sticky_note') return '#fef3c7'
     if (type === 'shape_container') return '#f8fafc'
     if (type === 'shape_text_label') return 'transparent'
+    if (type === 'bpmn_start_event') return '#f7fee7'
+    if (type === 'bpmn_end_event') return '#fef2f2'
+    if (type.includes('gateway')) return '#fffde7'
     if (type.startsWith('bpmn_')) return 'white'
     return 'white'
   }
@@ -549,7 +606,7 @@ export default function Canvas({
     const cy = y + h / 2
     const r = Math.max(28, Math.min(w, h) / 2 - 8)
 
-    if (node.category === 'Events') {
+    if (node.category === 'Events' || node.type.endsWith('_event')) {
       const eventStrokeWidth = node.type === 'bpmn_end_event' ? 5 : strokeWidth
       return (
         <g>
@@ -561,7 +618,7 @@ export default function Canvas({
       )
     }
 
-    if (node.category === 'Gateways') {
+    if (node.category === 'Gateways' || node.type.includes('gateway')) {
       const marker = node.type === 'bpmn_exclusive_gateway_x'
         ? 'X'
         : node.type === 'bpmn_parallel_gateway'
@@ -593,8 +650,8 @@ export default function Canvas({
       return renderDocumentShape(x, y, w, h, commonProps, stroke, strokeWidth)
     }
 
-    if (node.type === 'bpmn_pool' || node.type === 'bpmn_lane') {
-      return <rect x={x} y={y} width={w} height={h} rx={4} strokeDasharray="8,6" {...commonProps} />
+    if (isBpmnLane(node.type)) {
+      return <rect x={x} y={y} width={w} height={h} rx={0} fill="#f8fafc" stroke="#cbd5e1" strokeWidth={1.5} />
     }
 
     if (node.type === 'bpmn_group') {
@@ -622,6 +679,93 @@ export default function Canvas({
           </g>
         )}
       </g>
+    )
+  }
+
+  const getBpmnTaskIcon = (type: string) => {
+    if (type === 'bpmn_user_task') return 'person'
+    if (type === 'bpmn_service_task') return 'settings'
+    if (type === 'bpmn_manual_task') return 'pan_tool'
+    return ''
+  }
+
+  const isBpmnEventOrGateway = (type: string) =>
+    type.endsWith('_event') || type.includes('gateway')
+
+  const renderBpmnNodeContent = (node: DiagramNode, bounds: ReturnType<typeof getNodeBounds>) => {
+    const taskIcon = getBpmnTaskIcon(node.type)
+
+    if (isBpmnEventOrGateway(node.type)) {
+      return (
+        <foreignObject
+          x={bounds.x - 36}
+          y={bounds.y + bounds.height + 4}
+          width={bounds.width + 72}
+          height={44}
+          className="overflow-visible"
+        >
+          {editingText?.kind === 'node-title' && editingText.id === node.id ? (
+            <input
+              autoFocus
+              value={editingText.value}
+              onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
+              onKeyDown={(e) => handleEditKeyDown(e)}
+              onBlur={commitTextEdit}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full rounded border border-blue-300 bg-white px-1 text-center text-xs text-gray-900 outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          ) : (
+            <div
+              className="flex h-full items-start justify-center px-1 text-center text-[11px] font-medium leading-tight text-gray-700"
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-title')}
+              title={node.title}
+            >
+              {node.title}
+            </div>
+          )}
+        </foreignObject>
+      )
+    }
+
+    return (
+      <foreignObject
+        x={bounds.x + 8}
+        y={bounds.y + 8}
+        width={bounds.width - 16}
+        height={bounds.height - 16}
+        className="overflow-hidden"
+      >
+        <div className="flex h-full flex-col justify-center gap-1 bg-transparent px-2 text-center">
+          {taskIcon && (
+            <span className="material-symbols-rounded self-start text-[16px] leading-none text-sky-700" aria-hidden="true">
+              {taskIcon}
+            </span>
+          )}
+          {editingText?.kind === 'node-title' && editingText.id === node.id ? (
+            <input
+              autoFocus
+              value={editingText.value}
+              onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
+              onKeyDown={(e) => handleEditKeyDown(e)}
+              onBlur={commitTextEdit}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full rounded border border-blue-300 bg-white px-1 text-center text-xs font-semibold text-gray-900 outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          ) : (
+            <div
+              className="line-clamp-3 cursor-text text-xs font-semibold leading-tight text-gray-800"
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-title')}
+              title={node.title}
+            >
+              {node.title}
+            </div>
+          )}
+        </div>
+      </foreignObject>
     )
   }
 
@@ -739,7 +883,8 @@ export default function Canvas({
     [sourceId, targetId].sort().join('::')
 
   const getConnectorLineStyle = (connector: DiagramConnector) => {
-    const lineStyle = connector.lineStyle ?? (connector.type === 'flow' ? 'solid' : connector.type === 'related_to' ? 'dashed' : 'solid')
+    const connectorType = connector.type as string
+    const lineStyle = connector.lineStyle ?? (connectorType === 'flow' || connectorType === 'sequence_flow' ? 'solid' : connector.type === 'related_to' ? 'dashed' : 'solid')
     if (lineStyle === 'dashed') return '8,6'
     if (lineStyle === 'dotted') return '2,6'
     return '0'
@@ -757,6 +902,9 @@ export default function Canvas({
     return `url(#connector-${marker})`
   }
 
+  const shouldShowConnectorLabel = (connector: DiagramConnector) =>
+    Boolean(connector.label) && connector.label?.toLowerCase() !== 'sequence flow'
+
   const getQuadraticPoint = (
     start: Position,
     control: Position,
@@ -770,10 +918,67 @@ export default function Canvas({
     }
   }
 
+  const getEdgeConnectionPoints = (source: DiagramNode, target: DiagramNode) => {
+    const sourceBounds = getNodeBounds(source)
+    const targetBounds = getNodeBounds(target)
+    const sourceCenter = getNodeCenter(source)
+    const targetCenter = getNodeCenter(target)
+    const dx = targetCenter.x - sourceCenter.x
+    const dy = targetCenter.y - sourceCenter.y
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return {
+        start: {
+          x: dx >= 0 ? sourceBounds.x + sourceBounds.width : sourceBounds.x,
+          y: sourceCenter.y
+        },
+        end: {
+          x: dx >= 0 ? targetBounds.x : targetBounds.x + targetBounds.width,
+          y: targetCenter.y
+        }
+      }
+    }
+
+    return {
+      start: {
+        x: sourceCenter.x,
+        y: dy >= 0 ? sourceBounds.y + sourceBounds.height : sourceBounds.y
+      },
+      end: {
+        x: targetCenter.x,
+        y: dy >= 0 ? targetBounds.y : targetBounds.y + targetBounds.height
+      }
+    }
+  }
+
   const getConnectorVisual = (connector: DiagramConnector) => {
     const source = nodes.find(n => n.id === connector.sourceId)
     const target = nodes.find(n => n.id === connector.targetId)
     if (!source || !target) return null
+
+    const connectorType = connector.type as string
+    const isBpmnConnector =
+      connectorType === 'flow' ||
+      connectorType === 'sequence_flow' ||
+      isBpmnNode(source.type) ||
+      isBpmnNode(target.type)
+
+    if (isBpmnConnector && !isBpmnLane(source.type) && !isBpmnLane(target.type)) {
+      const { start, end } = getEdgeConnectionPoints(source, target)
+      const midX = start.x + (end.x - start.x) / 2
+      const hasLaneChange = Math.abs(start.y - end.y) > 12
+      const path = hasLaneChange
+        ? `M ${start.x} ${start.y} H ${midX} V ${end.y} H ${end.x}`
+        : `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+
+      return {
+        path,
+        labelPosition: {
+          x: hasLaneChange ? midX : start.x + (end.x - start.x) / 2,
+          y: hasLaneChange ? start.y + (end.y - start.y) / 2 - 8 : start.y - 10
+        }
+      }
+    }
 
     const sourceCenter = getNodeCenter(source)
     const targetCenter = getNodeCenter(target)
@@ -1079,6 +1284,42 @@ export default function Canvas({
           </defs>
           <rect width={canvasWidth} height={canvasHeight} fill="url(#grid)" />
 
+          {/* BPMN lanes as background bands */}
+          <g>
+            {nodes.filter(node => isBpmnLane(node.type)).map(node => {
+              const bounds = getNodeBounds(node)
+              return (
+                <g key={node.id} className="pointer-events-none">
+                  <rect
+                    x={bounds.x}
+                    y={bounds.y}
+                    width={Math.max(bounds.width, canvasWidth - bounds.x - 120)}
+                    height={Math.max(bounds.height, 130)}
+                    fill="#f8fafc"
+                    stroke="#cbd5e1"
+                    strokeWidth={1.5}
+                  />
+                  <rect
+                    x={bounds.x}
+                    y={bounds.y}
+                    width={160}
+                    height={Math.max(bounds.height, 130)}
+                    fill="#eef2f7"
+                    stroke="#cbd5e1"
+                    strokeWidth={1.5}
+                  />
+                  <text
+                    x={bounds.x + 18}
+                    y={bounds.y + Math.max(bounds.height, 130) / 2 + 5}
+                    className="fill-slate-700 text-sm font-semibold"
+                  >
+                    {node.title}
+                  </text>
+                </g>
+              )
+            })}
+          </g>
+
           {/* Connectors */}
           <g>
             {connectors.map(connector => {
@@ -1157,7 +1398,7 @@ export default function Canvas({
                         className="h-7 w-full rounded border border-blue-300 bg-white px-2 text-center text-xs text-gray-800 shadow outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </foreignObject>
-                  ) : connector.label && (
+                  ) : shouldShowConnectorLabel(connector) && (
                     <text
                       x={visual.labelPosition.x}
                       y={visual.labelPosition.y}
@@ -1223,7 +1464,7 @@ export default function Canvas({
 
           {/* Nodes */}
           <g>
-            {nodes.map(node => {
+            {nodes.filter(node => !isBpmnLane(node.type)).map(node => {
               const bounds = getNodeBounds(node)
               const colors = getNodeColor(node.type)
               const isSelected =
@@ -1282,71 +1523,75 @@ export default function Canvas({
                   )}
 
                   {/* Node content */}
-                  <foreignObject
-                    x={bounds.x}
-                    y={bounds.y}
-                    width={bounds.width}
-                    height={bounds.height}
-                    className="overflow-hidden"
-                  >
-                    <div className={`h-full p-3 flex flex-col ${isDrawingShape(node.type) || isBpmnNode(node.type) ? 'bg-transparent' : 'bg-white rounded-lg'}`}>
-                      {/* Icon and title */}
-                      <div className="flex items-start gap-2 mb-2">
-                        <div className={`${colors.text} flex-shrink-0 mt-0.5`}>
-                          {getNodeIcon(node.type)}
+                  {isBpmnNode(node.type) ? (
+                    renderBpmnNodeContent(node, bounds)
+                  ) : (
+                    <foreignObject
+                      x={bounds.x}
+                      y={bounds.y}
+                      width={bounds.width}
+                      height={bounds.height}
+                      className="overflow-hidden"
+                    >
+                      <div className={`h-full p-3 flex flex-col ${isDrawingShape(node.type) ? 'bg-transparent' : 'bg-white rounded-lg'}`}>
+                        {/* Icon and title */}
+                        <div className="flex items-start gap-2 mb-2">
+                          <div className={`${colors.text} flex-shrink-0 mt-0.5`}>
+                            {getNodeIcon(node.type)}
+                          </div>
+                          {editingText?.kind === 'node-title' && editingText.id === node.id ? (
+                            <input
+                              autoFocus
+                              value={editingText.value}
+                              onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
+                              onKeyDown={(e) => handleEditKeyDown(e)}
+                              onBlur={commitTextEdit}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              className="min-w-0 flex-1 rounded border border-blue-300 bg-white px-1 text-sm font-semibold text-gray-900 outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          ) : (
+                            <h3
+                              className="min-w-0 flex-1 cursor-text text-sm font-semibold leading-tight text-gray-900"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-title')}
+                            >
+                              {node.title}
+                            </h3>
+                          )}
                         </div>
-                        {editingText?.kind === 'node-title' && editingText.id === node.id ? (
-                          <input
+
+                        {/* Status badge */}
+                        {node.status && (
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded w-fit ${getStatusBadgeColor(node.status)} mb-2`}>
+                            {node.status}
+                          </span>
+                        )}
+
+                        {/* Description */}
+                        {editingText?.kind === 'node-description' && editingText.id === node.id ? (
+                          <textarea
                             autoFocus
                             value={editingText.value}
                             onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
-                            onKeyDown={(e) => handleEditKeyDown(e)}
+                            onKeyDown={(e) => handleEditKeyDown(e, true)}
                             onBlur={commitTextEdit}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
-                            className="min-w-0 flex-1 rounded border border-blue-300 bg-white px-1 text-sm font-semibold text-gray-900 outline-none focus:ring-1 focus:ring-blue-500"
+                            className="min-h-10 flex-1 resize-none rounded border border-blue-300 bg-white px-1 py-0.5 text-xs text-gray-700 outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         ) : (
-                          <h3
-                            className="min-w-0 flex-1 cursor-text text-sm font-semibold leading-tight text-gray-900"
+                          <p
+                            className="line-clamp-2 flex-1 cursor-text text-xs text-gray-600"
                             onMouseDown={(e) => e.stopPropagation()}
-                            onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-title')}
+                            onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-description')}
                           >
-                            {node.title}
-                          </h3>
+                            {node.description}
+                          </p>
                         )}
                       </div>
-
-                      {/* Status badge */}
-                      {node.status && (
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded w-fit ${getStatusBadgeColor(node.status)} mb-2`}>
-                          {node.status}
-                        </span>
-                      )}
-
-                      {/* Description */}
-                      {editingText?.kind === 'node-description' && editingText.id === node.id ? (
-                        <textarea
-                          autoFocus
-                          value={editingText.value}
-                          onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
-                          onKeyDown={(e) => handleEditKeyDown(e, true)}
-                          onBlur={commitTextEdit}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => e.stopPropagation()}
-                          className="min-h-10 flex-1 resize-none rounded border border-blue-300 bg-white px-1 py-0.5 text-xs text-gray-700 outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      ) : (
-                        <p
-                          className="line-clamp-2 flex-1 cursor-text text-xs text-gray-600"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-description')}
-                        >
-                          {node.description}
-                        </p>
-                      )}
-                    </div>
-                  </foreignObject>
+                    </foreignObject>
+                  )}
 
                   {isSingleNodeSelected && (
                     <rect
@@ -1432,6 +1677,54 @@ export default function Canvas({
                 </g>
               )
             })}
+          </g>
+
+          {/* BPMN architecture annotations */}
+          <g>
+            {getArchitectureAnnotationVisuals().map(({ annotation, sourceNodeId, noteBounds, sourcePoint, targetPoint }) => (
+              <g key={`${sourceNodeId}-${annotation.id}`}>
+                <path
+                  d={`M ${sourcePoint.x} ${sourcePoint.y} L ${targetPoint.x} ${targetPoint.y}`}
+                  fill="none"
+                  stroke="#64748b"
+                  strokeWidth={1.5}
+                  strokeDasharray="5,5"
+                  className="pointer-events-none"
+                />
+                <foreignObject
+                  x={noteBounds.x}
+                  y={noteBounds.y}
+                  width={noteBounds.width}
+                  height={noteBounds.height}
+                  className="overflow-visible"
+                >
+                  <button
+                    type="button"
+                    title="Open related architecture view"
+                    className="flex h-full w-full cursor-pointer gap-2 rounded-md border border-amber-200 bg-amber-50/95 p-2 text-left text-amber-950 shadow-sm transition-colors hover:border-amber-300 hover:bg-amber-100"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!isPresentationMode) {
+                        onOpenDiagram?.(annotation.targetDiagramId, annotation.targetNodeIds)
+                      }
+                    }}
+                  >
+                    <span className="material-symbols-rounded mt-0.5 text-[18px] leading-none text-amber-700" aria-hidden="true">
+                      {annotation.icon ?? 'sticky_note_2'}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-semibold leading-tight">{annotation.title}</span>
+                      <span className="line-clamp-2 text-[10px] leading-snug text-amber-900/85">{annotation.text}</span>
+                    </span>
+                  </button>
+                </foreignObject>
+              </g>
+            ))}
           </g>
 
           {connectorDraft && (

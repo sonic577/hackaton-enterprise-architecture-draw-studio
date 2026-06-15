@@ -12,6 +12,7 @@ import { analyzeArchitecture } from './utils/analyzeArchitectureApi'
 import { isLongBusinessCaseInput, isObjectivesInput, quickCaptureIntentToAnalysisResponse } from './utils/quickCaptureIntent'
 import { analyzeProcess, ProcessAnalysisResult } from './utils/processAnalyzer'
 import { exportArchitectureDocx, openPrintableArchitectureDocument } from './utils/documentExport'
+import { createContosoFarmacyDemoProject } from './demo/contosoFarmacyDemo'
 import { Selection, Diagram, DiagramNode, DiagramConnector, Position } from './types'
 
 interface DiagramStackItem {
@@ -477,10 +478,11 @@ export default function App() {
         }
       ])
       setSelection({ type: null })
+      setHighlightedAnalysisNodeIds(node.focusNodeIds ?? [])
     }
   }
 
-  const handleOpenDiagram = (diagramId: string) => {
+  const handleOpenDiagram = (diagramId: string, focusNodeIds?: string[]) => {
     const diagram = diagrams.get(diagramId)
     if (!diagram) return
 
@@ -495,6 +497,7 @@ export default function App() {
       }
     ])
     setSelection({ type: null })
+    setHighlightedAnalysisNodeIds(focusNodeIds ?? parentNode?.focusNodeIds ?? [])
   }
 
   const handleCreateChildDiagram = (nodeId: string) => {
@@ -996,6 +999,18 @@ export default function App() {
   const isPosition = (value: unknown) =>
     isRecord(value) && typeof value.x === 'number' && typeof value.y === 'number'
 
+  const isArchitectureAnnotation = (value: unknown) =>
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.title === 'string' &&
+    typeof value.text === 'string' &&
+    typeof value.targetDiagramId === 'string' &&
+    (value.icon === undefined || typeof value.icon === 'string') &&
+    (
+      value.targetNodeIds === undefined ||
+      (Array.isArray(value.targetNodeIds) && value.targetNodeIds.every(item => typeof item === 'string'))
+    )
+
   const isDiagramNode = (value: unknown): value is DiagramNode =>
     isRecord(value) &&
     typeof value.id === 'string' &&
@@ -1009,7 +1024,11 @@ export default function App() {
     (value.bpmnType === undefined || typeof value.bpmnType === 'string') &&
     (value.category === undefined || typeof value.category === 'string') &&
     (value.source === undefined || typeof value.source === 'string') &&
-    (value.linkedDiagramId === undefined || typeof value.linkedDiagramId === 'string')
+    (value.linkedDiagramId === undefined || typeof value.linkedDiagramId === 'string') &&
+    (value.linkedDiagramName === undefined || typeof value.linkedDiagramName === 'string') &&
+    (value.navigationLabel === undefined || typeof value.navigationLabel === 'string') &&
+    (value.focusNodeIds === undefined || (Array.isArray(value.focusNodeIds) && value.focusNodeIds.every(item => typeof item === 'string'))) &&
+    (value.architectureAnnotations === undefined || (Array.isArray(value.architectureAnnotations) && value.architectureAnnotations.every(isArchitectureAnnotation)))
 
   const isDiagramConnector = (value: unknown) =>
     isRecord(value) &&
@@ -1180,6 +1199,31 @@ export default function App() {
     fileInputRef.current?.click()
   }
 
+  const hasProjectContent = () =>
+    Array.from(diagrams.values()).some(diagram => diagram.nodes.length > 0 || diagram.connectors.length > 0) ||
+    diagramTree.some(item => item.kind === 'diagram')
+
+  const handleLoadDemoCase = () => {
+    if (hasProjectContent() && !window.confirm('Load the demo case and replace the current project?')) return
+
+    const demoProject = createContosoFarmacyDemoProject()
+    const demoDiagrams = new Map(demoProject.diagrams.map(diagram => [diagram.id, diagram]))
+    const currentDemoDiagram = demoDiagrams.get(demoProject.currentDiagramId)
+    if (!currentDemoDiagram) {
+      setProjectMessage('Could not load the demo case.')
+      return
+    }
+
+    setDiagrams(demoDiagrams)
+    setDiagramTree(demoProject.diagramTree)
+    setDiagramStack([{ diagram: currentDemoDiagram }])
+    setSelection({ type: null })
+    setAnalysisResults([])
+    setAnalysisMessage(null)
+    setHighlightedAnalysisNodeIds([])
+    setProjectMessage(`Loaded ${demoProject.name}.`)
+  }
+
   const handleLoadProject = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -1232,6 +1276,7 @@ export default function App() {
         onAnalyzeProcess={handleAnalyzeProcess}
         onSaveProject={handleSaveProject}
         onLoadProject={handleLoadProjectClick}
+        onLoadDemoCase={handleLoadDemoCase}
         onExportDocx={handleExportDocx}
         onPrintPdf={handlePrintPdf}
       />

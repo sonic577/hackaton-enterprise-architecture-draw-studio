@@ -618,7 +618,7 @@ const generateExplicitProcessBpmnResponse = (input: string) => {
       id: `explicit-bpmn-conn-${connectors.length + 1}`,
       sourceId,
       targetId,
-      relationshipType: 'Flow',
+      relationshipType: 'sequence_flow',
       label,
       description: label
     })
@@ -814,7 +814,7 @@ const buildBpmnProcessView = (input: string) => {
       id: `bpmn-conn-${connectors.length + 1}`,
       sourceId,
       targetId,
-      relationshipType: 'Flow',
+      relationshipType: 'sequence_flow',
       label,
       description: label
     })

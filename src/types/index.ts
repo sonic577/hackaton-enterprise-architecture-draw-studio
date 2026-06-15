@@ -22,9 +22,18 @@ export interface ArchitectureElement {
 }
 
 // Connector/Relationship types
-export type ConnectorType = 'related_to' | 'uses' | 'depends_on' | 'supports' | 'contains' | 'impacts' | 'consumes' | 'produces' | 'flow' | 'association'
+export type ConnectorType = 'related_to' | 'uses' | 'depends_on' | 'supports' | 'contains' | 'impacts' | 'consumes' | 'produces' | 'flow' | 'sequence_flow' | 'association'
 export type ConnectorLineStyle = 'solid' | 'dashed' | 'dotted'
 export type ConnectorMarker = 'none' | 'arrow' | 'open_arrow' | 'diamond' | 'circle'
+
+export interface ArchitectureAnnotation {
+  id: string
+  title: string
+  text: string
+  targetDiagramId: string
+  targetNodeIds?: string[]
+  icon?: string
+}
 
 // Node in the diagram
 export interface DiagramNode {
@@ -46,6 +55,10 @@ export interface DiagramNode {
   context?: string
   status?: 'extracted' | 'inferred' | 'pending' | 'confirmed'
   linkedDiagramId?: string // ID of a diagram that expands this node
+  linkedDiagramName?: string
+  focusNodeIds?: string[]
+  navigationLabel?: string
+  architectureAnnotations?: ArchitectureAnnotation[]
   childDiagramId?: string // Legacy nested diagram reference
 }
 

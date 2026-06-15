@@ -413,6 +413,8 @@ export function getConnectorStyle(type: string): string {
       return 'stroke-purple-500'
     case 'impacts':
       return 'stroke-orange-500'
+    case 'sequence_flow':
+      return 'stroke-gray-500'
     default:
       return 'stroke-gray-400'
   }

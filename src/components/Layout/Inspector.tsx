@@ -8,7 +8,7 @@ interface InspectorProps {
   nodes: DiagramNode[]
   connectors: DiagramConnector[]
   onClearSelection: () => void
-  onOpenDiagram?: (diagramId: string) => void
+  onOpenDiagram?: (diagramId: string, focusNodeIds?: string[]) => void
   onCreateChildDiagram?: (nodeId: string) => void
   onUpdateNode?: (nodeId: string, updates: Partial<DiagramNode>) => void
   onUpdateConnector?: (connectorId: string, updates: Partial<DiagramConnector>) => void
@@ -60,6 +60,21 @@ export default function Inspector({
         medium: 'bg-amber-100 text-amber-800',
         high: 'bg-red-100 text-red-800'
       }
+      const causeLayerClasses: Record<string, string> = {
+        Process: 'border-blue-100 bg-blue-50 text-blue-900',
+        Application: 'border-emerald-100 bg-emerald-50 text-emerald-900',
+        Data: 'border-orange-100 bg-orange-50 text-orange-900',
+        Technology: 'border-slate-200 bg-slate-50 text-slate-900'
+      }
+      const formatDiagramButtonLabel = (diagramId: string) => {
+        const normalized = diagramId.toLowerCase()
+        if (normalized.includes('technology')) return 'Open Technology View'
+        if (normalized.includes('application')) return 'Open Application View'
+        if (normalized.includes('data')) return 'Open Data View'
+        if (normalized.includes('gap')) return 'Open Gap Analysis'
+        if (normalized.includes('business')) return 'Open Process Redesign'
+        return 'Open related view'
+      }
 
       return (
         <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
@@ -83,28 +98,82 @@ export default function Inspector({
                 ) : (
                   <div className="space-y-2">
                     {results.map(result => (
-                      <button
+                      <div
                         key={result.id}
-                        onClick={() => onSelectAnalysisResult?.(result)}
-                        className="w-full rounded border border-gray-200 bg-white p-3 text-left transition-colors hover:border-amber-300 hover:bg-amber-50"
+                        className="rounded border border-gray-200 bg-white p-3 text-left transition-colors hover:border-amber-300"
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <p className="text-sm font-semibold text-gray-900">{result.title}</p>
-                          <span className={`rounded px-2 py-0.5 text-xs font-medium ${severityClasses[result.severity]}`}>
-                            {result.severity}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs leading-relaxed text-gray-600">{result.description}</p>
-                        <p className="mt-2 text-xs leading-relaxed text-gray-500">{result.reasoning}</p>
+                        <button
+                          onClick={() => onSelectAnalysisResult?.(result)}
+                          className="w-full text-left"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-sm font-semibold text-gray-900">{result.title}</p>
+                            <span className={`rounded px-2 py-0.5 text-xs font-medium ${severityClasses[result.severity]}`}>
+                              {result.severity}
+                            </span>
+                          </div>
+                          {result.affectedProcessStep && (
+                            <p className="mt-1 text-xs font-medium text-gray-500">
+                              Affected process step: <span className="text-gray-800">{result.affectedProcessStep}</span>
+                            </p>
+                          )}
+                          <p className="mt-1 text-xs leading-relaxed text-gray-600">{result.description}</p>
+                        </button>
+
+                        {result.possibleCauses && Object.entries(result.possibleCauses).some(([, causes]) => Boolean(causes?.length)) && (
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Possible causes</p>
+                            {Object.entries(result.possibleCauses).filter(([, causes]) => Boolean(causes?.length)).map(([layer, causes]) => (
+                              <div key={layer} className={`rounded border px-2 py-2 ${causeLayerClasses[layer] ?? 'border-gray-100 bg-gray-50 text-gray-800'}`}>
+                                <p className="text-xs font-semibold">{layer}</p>
+                                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs leading-snug">
+                                  {causes?.map(cause => (
+                                    <li key={cause}>{cause}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="mt-3 text-xs leading-relaxed text-gray-500">{result.reasoning}</p>
                         <div className="mt-2 rounded bg-gray-50 px-2 py-1 text-xs text-gray-700">
                           {result.suggestedAction}
                         </div>
+                        {result.recommendedActions && result.recommendedActions.length > 0 && (
+                          <div className="mt-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Recommended next actions</p>
+                            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs leading-snug text-gray-700">
+                              {result.recommendedActions.map(action => (
+                                <li key={action}>{action}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {result.relatedViews && result.relatedViews.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {result.relatedViews.map(view => (
+                              <button
+                                key={`${result.id}-${view.diagramId}-${view.label}`}
+                                onClick={() => onOpenDiagram?.(view.diagramId, view.targetNodeIds)}
+                                className="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-800 transition-colors hover:border-blue-300 hover:bg-blue-100"
+                              >
+                                {view.label || formatDiagramButtonLabel(view.diagramId)}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         {result.relatedNodeIds.length > 0 && (
                           <p className="mt-2 text-xs text-gray-400">
                             Related nodes: {result.relatedNodeIds.length}
                           </p>
                         )}
-                      </button>
+                        {result.relatedArchitectureNodes && result.relatedArchitectureNodes.length > 0 && (
+                          <p className="mt-1 text-xs text-gray-400">
+                            Related architecture nodes: {result.relatedArchitectureNodes.length}
+                          </p>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -416,6 +485,7 @@ export default function Inspector({
       { value: 'consumes', label: 'Consumes' },
       { value: 'produces', label: 'Produces' },
       { value: 'flow', label: 'Flow' },
+      { value: 'sequence_flow', label: 'Sequence Flow' },
       { value: 'association', label: 'Association' }
     ]
     const lineStyles: Array<{ value: ConnectorLineStyle; label: string }> = [
@@ -430,7 +500,7 @@ export default function Inspector({
       { value: 'diamond', label: 'Diamond' },
       { value: 'circle', label: 'Circle' }
     ]
-    const defaultLineStyle: ConnectorLineStyle = connector.type === 'flow' ? 'solid' : connector.type === 'related_to' ? 'dashed' : 'solid'
+    const defaultLineStyle: ConnectorLineStyle = connector.type === 'flow' || connector.type === 'sequence_flow' ? 'solid' : connector.type === 'related_to' ? 'dashed' : 'solid'
     const defaultEndMarker: ConnectorMarker = connector.type === 'association' ? 'none' : connector.type === 'contains' ? 'diamond' : 'arrow'
     const fieldClass = 'w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
     const relationshipLabel = relationshipTypes.find(type => type.value === connector.type)?.label ?? connector.type.replace(/_/g, ' ')
@@ -491,8 +561,8 @@ export default function Inspector({
                 onUpdateConnector?.(connector.id, {
                   type: nextType,
                   label: relationshipTypes.find(type => type.value === nextType)?.label ?? connector.label,
-                  lineStyle: nextType === 'flow' ? 'solid' : nextType === 'related_to' ? 'dashed' : connector.lineStyle,
-                  endMarker: nextType === 'contains' ? 'diamond' : nextType === 'association' ? 'none' : nextType === 'flow' ? 'arrow' : connector.endMarker
+                  lineStyle: nextType === 'flow' || nextType === 'sequence_flow' ? 'solid' : nextType === 'related_to' ? 'dashed' : connector.lineStyle,
+                  endMarker: nextType === 'contains' ? 'diamond' : nextType === 'association' ? 'none' : nextType === 'flow' || nextType === 'sequence_flow' ? 'arrow' : connector.endMarker
                 })
               }}
               className={fieldClass}

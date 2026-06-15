@@ -2,6 +2,13 @@ import { DiagramConnector, DiagramNode } from '../types'
 
 export type AnalysisGroup = 'Bottlenecks' | 'Gaps' | 'Risks' | 'Recommendations' | 'Solution Options'
 export type AnalysisSeverity = 'low' | 'medium' | 'high'
+export type ArchitectureCauseLayer = 'Process' | 'Application' | 'Data' | 'Technology'
+
+export interface ArchitectureAnalysisViewLink {
+  label: string
+  diagramId: string
+  targetNodeIds?: string[]
+}
 
 export interface ProcessAnalysisResult {
   id: string
@@ -12,6 +19,11 @@ export interface ProcessAnalysisResult {
   relatedNodeIds: string[]
   reasoning: string
   suggestedAction: string
+  affectedProcessStep?: string
+  possibleCauses?: Partial<Record<ArchitectureCauseLayer, string[]>>
+  recommendedActions?: string[]
+  relatedViews?: ArchitectureAnalysisViewLink[]
+  relatedArchitectureNodes?: string[]
 }
 
 const GROUP_ORDER: AnalysisGroup[] = ['Bottlenecks', 'Gaps', 'Risks', 'Recommendations', 'Solution Options']
@@ -53,7 +65,8 @@ const createResult = (
   severity: AnalysisSeverity,
   relatedNodeIds: string[],
   reasoning: string,
-  suggestedAction: string
+  suggestedAction: string,
+  details: Partial<Omit<ProcessAnalysisResult, 'id' | 'group' | 'title' | 'description' | 'severity' | 'relatedNodeIds' | 'reasoning' | 'suggestedAction'>> = {}
 ): ProcessAnalysisResult => ({
   id: `${group}-${title}-${relatedNodeIds.join('-')}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
   group,
@@ -62,8 +75,98 @@ const createResult = (
   severity,
   relatedNodeIds,
   reasoning,
-  suggestedAction
+  suggestedAction,
+  ...details
 })
+
+const unique = <T,>(items: T[]) => Array.from(new Set(items))
+
+const viewLabelFromDiagramId = (diagramId: string) => {
+  const normalized = diagramId.toLowerCase()
+  if (normalized.includes('technology')) return 'Open Technology View'
+  if (normalized.includes('application')) return 'Open Application View'
+  if (normalized.includes('data')) return 'Open Data View'
+  if (normalized.includes('gap')) return 'Open Gap Analysis'
+  if (normalized.includes('business')) return 'Open Process Redesign'
+  if (normalized.includes('bpmn') || normalized.includes('process')) return 'Open Process View'
+  return 'Open related architecture view'
+}
+
+const annotationCauseLayer = (diagramId: string): ArchitectureCauseLayer => {
+  const normalized = diagramId.toLowerCase()
+  if (normalized.includes('application')) return 'Application'
+  if (normalized.includes('data')) return 'Data'
+  if (normalized.includes('technology')) return 'Technology'
+  return 'Process'
+}
+
+const hasText = (node: DiagramNode, pattern: RegExp) => pattern.test(nodeText(node))
+
+const createQueueArchitectureFinding = (node: DiagramNode) => createResult(
+  'Bottlenecks',
+  'Long waiting time / queue bottleneck',
+  `${node.title} suggests a queue or waiting-time bottleneck that may have causes across process, application, data, and technology layers.`,
+  'high',
+  [node.id],
+  'Waiting is rarely caused by one task alone. In this process context it can result from intake design, missing demand classification, missing metrics, or technology delays that block the service counter.',
+  'Redesign intake and split request flows; measure waiting time and abandonment; review billing and printing response time.',
+  {
+    affectedProcessStep: node.title,
+    possibleCauses: {
+      Process: [
+        'Single queue for different request types',
+        'No pre-intake or request classification'
+      ],
+      Application: [
+        'No turn management system or intake workflow support'
+      ],
+      Data: [
+        'No waiting time or abandonment tracking'
+      ],
+      Technology: [
+        'Billing, network, database, or printer delays may block the service counter'
+      ]
+    },
+    recommendedActions: [
+      'Redesign intake and split request flows',
+      'Measure waiting time and abandonment',
+      'Review billing response time'
+    ],
+    relatedViews: [
+      { label: 'Open Gap Analysis', diagramId: 'demo-gap-analysis-view', targetNodeIds: ['demo-gap-01', 'demo-gap-06', 'demo-gap-07'] },
+      { label: 'Open Technology View', diagramId: 'demo-technology-view', targetNodeIds: ['demo-billing-application', 'demo-sales-database', 'demo-database-server', 'demo-local-network', 'demo-invoice-printer'] }
+    ],
+    relatedArchitectureNodes: ['demo-gap-01', 'demo-gap-06', 'demo-gap-07', 'demo-billing-application', 'demo-sales-database', 'demo-database-server', 'demo-local-network', 'demo-invoice-printer']
+  }
+)
+
+const createBillingArchitectureFinding = (node: DiagramNode) => createResult(
+  'Bottlenecks',
+  'Billing delay may block the counter',
+  `${node.title} depends on billing, data access, and store technology that may slow customer-facing service.`,
+  'high',
+  [node.id],
+  'Invoice generation is an application step in the process, but its delay hypothesis spans application response time, data query latency, server/network performance, and printing dependencies.',
+  'Measure invoice generation time; review database, server, network, POS workstation, and printer performance.',
+  {
+    affectedProcessStep: node.title,
+    possibleCauses: {
+      Application: ['Billing Application response time'],
+      Data: ['Sales Database query delay'],
+      Technology: ['Database Server, Local Network, POS Workstation, or Invoice Printer performance']
+    },
+    recommendedActions: [
+      'Measure invoice generation time',
+      'Review database/server/network/printer performance'
+    ],
+    relatedViews: [
+      { label: 'Open Technology View', diagramId: 'demo-technology-view', targetNodeIds: ['demo-billing-application', 'demo-sales-database', 'demo-database-server', 'demo-local-network', 'demo-pos-workstation', 'demo-invoice-printer'] },
+      { label: 'Open Application View', diagramId: 'demo-application-view', targetNodeIds: ['demo-billing-application'] },
+      { label: 'Open Data View', diagramId: 'demo-data-view', targetNodeIds: ['demo-sales-database'] }
+    ],
+    relatedArchitectureNodes: ['demo-billing-application', 'demo-sales-database', 'demo-database-server', 'demo-local-network', 'demo-pos-workstation', 'demo-invoice-printer']
+  }
+)
 
 const getLongestDirectedPath = (nodes: DiagramNode[], connectors: DiagramConnector[]) => {
   const processNodeIds = new Set(nodes.filter(isProcessNode).map(node => node.id))
@@ -115,6 +218,49 @@ export const analyzeProcess = (nodes: DiagramNode[], connectors: DiagramConnecto
     const nodeIncoming = incoming.get(node.id) ?? []
     const nodeOutgoing = outgoing.get(node.id) ?? []
     const text = nodeText(node)
+    const architectureAnnotations = node.architectureAnnotations ?? []
+
+    if (isProcessNode(node) && (hasText(node, /\b(queue|wait|waiting|fila|espera|abandono|abandonment)\b/i) || node.title.toLowerCase().includes('general queue'))) {
+      results.push(createQueueArchitectureFinding(node))
+      nodesWithDetectedIssues.add(node.id)
+    }
+
+    if (isProcessNode(node) && hasText(node, /\b(billing|invoice|receipt|factura|recibo|printer|print)\b/i)) {
+      results.push(createBillingArchitectureFinding(node))
+      nodesWithDetectedIssues.add(node.id)
+    }
+
+    architectureAnnotations.forEach(annotation => {
+      const layer = annotationCauseLayer(annotation.targetDiagramId)
+      const relatedViews = [{
+        label: viewLabelFromDiagramId(annotation.targetDiagramId),
+        diagramId: annotation.targetDiagramId,
+        targetNodeIds: annotation.targetNodeIds
+      }]
+
+      results.push(createResult(
+        layer === 'Technology' ? 'Risks' : 'Gaps',
+        annotation.title,
+        annotation.text,
+        layer === 'Technology' ? 'high' : 'medium',
+        [node.id],
+        `The BPMN step carries an architecture annotation that links this process activity to the ${layer.toLowerCase()} layer.`,
+        `Open the related ${layer.toLowerCase()} view and validate the dependency for this process step.`,
+        {
+          affectedProcessStep: node.title,
+          possibleCauses: {
+            [layer]: [annotation.text]
+          },
+          recommendedActions: [
+            `Validate ${annotation.title.toLowerCase()} for this step`,
+            'Confirm whether the dependency contributes to wait time, handoff delay, or operational risk'
+          ],
+          relatedViews,
+          relatedArchitectureNodes: annotation.targetNodeIds
+        }
+      ))
+      nodesWithDetectedIssues.add(node.id)
+    })
 
     if (nodeIncoming.length === 0 && nodeOutgoing.length === 0) {
       results.push(createResult(
@@ -163,8 +309,28 @@ export const analyzeProcess = (nodes: DiagramNode[], connectors: DiagramConnecto
         `${node.title} contains language associated with ${keyword}.`,
         ['bottleneck', 'delay', 'queue', 'rework', 'duplicate'].includes(keyword) ? 'high' : 'medium',
         [node.id],
-        'The node text or metadata contains terms commonly associated with process friction.',
-        'Review cycle time, queue size, ownership, and handoff rules for this step.'
+        'The node text or metadata contains terms commonly associated with process friction. Treat this as a local signal and validate it against process design, application support, available data, and technology dependencies.',
+        'Review cycle time, queue size, ownership, handoff rules, and related architecture annotations for this step.',
+        {
+          affectedProcessStep: node.title,
+          possibleCauses: {
+            Process: ['Local process friction detected from step semantics'],
+            Application: architectureAnnotations.some(annotation => annotationCauseLayer(annotation.targetDiagramId) === 'Application') ? ['Application dependency annotation exists for this step'] : [],
+            Data: architectureAnnotations.some(annotation => annotationCauseLayer(annotation.targetDiagramId) === 'Data') ? ['Data dependency annotation exists for this step'] : [],
+            Technology: architectureAnnotations.some(annotation => annotationCauseLayer(annotation.targetDiagramId) === 'Technology') ? ['Technology dependency annotation exists for this step'] : []
+          },
+          recommendedActions: [
+            'Measure cycle time for this step',
+            'Validate ownership and handoff rules',
+            'Review related architecture views when annotations are available'
+          ],
+          relatedViews: architectureAnnotations.map(annotation => ({
+            label: viewLabelFromDiagramId(annotation.targetDiagramId),
+            diagramId: annotation.targetDiagramId,
+            targetNodeIds: annotation.targetNodeIds
+          })),
+          relatedArchitectureNodes: unique(architectureAnnotations.flatMap(annotation => annotation.targetNodeIds ?? []))
+        }
       ))
       nodesWithDetectedIssues.add(node.id)
     }
