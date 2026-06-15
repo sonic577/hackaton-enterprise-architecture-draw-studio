@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { generateDiagramFromText } from './src/utils/mockDiagramGenerator'
-import { isLongBusinessCaseInput, quickCaptureIntentToAnalysisResponse } from './src/utils/quickCaptureIntent'
+import { isLongBusinessCaseInput, isObjectivesInput, quickCaptureIntentToAnalysisResponse } from './src/utils/quickCaptureIntent'
 
 const apiVersion = '2024-08-01-preview'
 
@@ -41,6 +41,9 @@ const normalizeAnalysisResponse = (value: unknown) => {
     nodes: response.nodes,
     connectors: response.connectors,
     diagrams: Array.isArray(response.diagrams) ? response.diagrams : [],
+    layoutPlan: response.layoutPlan && typeof response.layoutPlan === 'object' && !Array.isArray(response.layoutPlan)
+      ? response.layoutPlan
+      : undefined,
     assumptions: normalizeArray(response.assumptions),
     gaps: normalizeArray(response.gaps),
     risks: normalizeArray(response.risks),
@@ -134,6 +137,13 @@ Return only valid JSON with this exact shape:
   "nodes": [],
   "connectors": [],
   "diagrams": [],
+  "layoutPlan": {
+    "viewType": "",
+    "layoutStyle": "",
+    "groups": [],
+    "ordering": [],
+    "notes": ""
+  },
   "assumptions": [],
   "gaps": [],
   "risks": [],
@@ -142,10 +152,15 @@ Return only valid JSON with this exact shape:
 
 Create architecture/process diagram elements from the user text.
 Each node should include id, name, type, description, layer, status, and evidence when possible.
+Each node may include logical layout hints: order, laneId, groupId, row, column, parentId. Do not rely on final x/y.
 Each connector should include sourceId, targetId, relationshipType, label, and description when possible.
 Use stable node ids inside the JSON so connectors can reference them.
+Set layoutPlan.viewType to one of: objectives_board, bpmn_process, layered_architecture, value_chain, capability_map, analysis_board.
 ${isLongBusinessCaseInput(text)
     ? 'This is a long business/process case. Do not create one summary node. Create multiple short-named nodes for Business Context, Goals/Objectives, Business Process, Process Steps, Actors, Gaps, Risks, Recommendations, Solution Options, Application Components, and Data Components when applicable. Add connectors between process, steps, gaps, risks, and recommendations. Also include diagrams[0] as a BPMN / Process View with Start Event, User Task, Service Task, Exclusive Gateway, End Event, Pool/Lane nodes if applicable, and Flow connectors arranged left to right.'
+    : ''}
+${isObjectivesInput(text)
+    ? 'This is an objectives_view request. Return only independent Objective or Goal nodes in a grid. Do not create Business Process, Current Process, BPMN diagrams, Gaps, Risks, Recommendations, Solution Options, or connectors unless explicitly requested.'
     : ''}
 
 User text:
@@ -216,9 +231,31 @@ const architectureAnalysisApiPlugin = (env: Record<string, string>) => ({
           return
         }
 
+        const localIntent = quickCaptureIntentToAnalysisResponse(text, body.currentDiagram)
+        const hasConfidentLocalIntent = !isLongBusinessCaseInput(text) && localIntent.nodes.some(node => node.type !== 'Generated Summary')
+        if (hasConfidentLocalIntent) {
+          sendJson(res, 200, localIntent)
+          return
+        }
+
         if ((env.ANALYSIS_MODE ?? 'mock').toLowerCase() === 'foundry') {
           try {
             const foundryResult = await callChatCompletion(env, text, body.currentDiagram)
+            if (isObjectivesInput(text)) {
+              const hasInvalidObjectiveOutput =
+                (foundryResult as any).connectors?.length > 0 ||
+                (foundryResult as any).diagrams?.length > 0 ||
+                (foundryResult as any).nodes?.some((node: any) => {
+                  const raw = `${node.type ?? ''} ${node.name ?? ''}`.toLowerCase()
+                  return raw.includes('process') || raw.includes('current process') || raw.includes('gap') || raw.includes('risk') || raw.includes('recommendation') || raw.includes('solution')
+                })
+
+              if (hasInvalidObjectiveOutput) {
+                sendJson(res, 200, mockAnalysisResponse(text, body.currentDiagram))
+                return
+              }
+            }
+
             if (isLongBusinessCaseInput(text) && (!Array.isArray((foundryResult as any).diagrams) || (foundryResult as any).diagrams.length === 0)) {
               sendJson(res, 200, mockAnalysisResponse(text, body.currentDiagram))
               return

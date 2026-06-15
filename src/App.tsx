@@ -9,7 +9,7 @@ import { createComponentMetadata } from './data/componentDefinitions'
 import { generateDiagramFromText } from './utils/mockDiagramGenerator'
 import { parseFoundryResponse } from './utils/foundryResponseParser'
 import { analyzeArchitecture } from './utils/analyzeArchitectureApi'
-import { isLongBusinessCaseInput, quickCaptureIntentToAnalysisResponse } from './utils/quickCaptureIntent'
+import { isLongBusinessCaseInput, isObjectivesInput, quickCaptureIntentToAnalysisResponse } from './utils/quickCaptureIntent'
 import { analyzeProcess, ProcessAnalysisResult } from './utils/processAnalyzer'
 import { exportArchitectureDocx, openPrintableArchitectureDocument } from './utils/documentExport'
 import { Selection, Diagram, DiagramNode, DiagramConnector, Position } from './types'
@@ -41,17 +41,7 @@ interface InternalClipboard {
 const PROJECT_SCHEMA_VERSION = 1
 
 const initialDiagramTree: DiagramTreeItem[] = [
-  { id: 'folder-enterprise', kind: 'folder', name: 'Enterprise Architecture', expanded: true },
-  { id: 'tree-diagram-root', kind: 'diagram', name: rootDiagram.name, diagramId: rootDiagram.id, parentId: 'folder-enterprise' },
-  {
-    id: 'tree-diagram-account-provisioning',
-    kind: 'diagram',
-    name: 'Account Provisioning',
-    diagramId: 'diagram-account-provisioning',
-    parentId: 'folder-enterprise',
-    parentNodeId: 'node-process-1',
-    linkedFromNodeId: 'node-process-1'
-  }
+  { id: 'folder-enterprise', kind: 'folder', name: 'Enterprise Architecture', expanded: true }
 ]
 
 const createDefaultDiagramTree = (sourceDiagrams: Diagram[]): DiagramTreeItem[] => [
@@ -410,6 +400,17 @@ export default function App() {
     setDiagramStack(newStack)
   }
 
+  const handleUpdateNode = (nodeId: string, updates: Partial<DiagramNode>) => {
+    const updatedDiagram = {
+      ...currentDiagram,
+      nodes: currentDiagram.nodes.map(node =>
+        node.id === nodeId ? { ...node, ...updates } : node
+      )
+    }
+
+    updateCurrentDiagram(updatedDiagram)
+  }
+
   const createChildDiagramForNode = (node: DiagramNode) => {
     const linkedDiagramId = `diagram-${node.id}-child`
     const childDiagram: Diagram = {
@@ -747,6 +748,23 @@ export default function App() {
       return processDegree > 3 || hasOperationalDetailOnMainCanvas
     }
 
+    const isInvalidObjectivesResult = (nodes: DiagramNode[], connectors: DiagramConnector[], childDiagrams: Diagram[]) => {
+      if (!isObjectivesInput(input)) return false
+      const hasNonObjectiveNode = nodes.some(node => {
+        const text = `${node.type} ${node.title}`.toLowerCase()
+        return (
+          text.includes('process') ||
+          text.includes('current process') ||
+          text.includes('gap') ||
+          text.includes('risk') ||
+          text.includes('recommendation') ||
+          text.includes('solution')
+        )
+      })
+
+      return connectors.length > 0 || childDiagrams.length > 0 || hasNonObjectiveNode
+    }
+
     const foundryResult = parseFoundryResponse(input)
     if (foundryResult.kind === 'invalid') {
       setProjectMessage(foundryResult.error)
@@ -772,7 +790,11 @@ export default function App() {
         throw new Error(parsed.kind === 'invalid' ? parsed.error : 'Architecture analysis returned no diagram data.')
       }
 
-      if (isSingleGiantNodeResult(parsed.data.nodes) || isTangledArchitectureResult(parsed.data.nodes, parsed.data.connectors)) {
+      if (
+        isSingleGiantNodeResult(parsed.data.nodes) ||
+        isTangledArchitectureResult(parsed.data.nodes, parsed.data.connectors) ||
+        isInvalidObjectivesResult(parsed.data.nodes, parsed.data.connectors, parsed.data.diagrams)
+      ) {
         throw new Error('Architecture analysis returned an oversized or tangled main diagram.')
       }
 
@@ -1268,6 +1290,7 @@ export default function App() {
           onCanvasClick={handleCanvasClick}
           onUpdateNodePosition={handleUpdateNodePosition}
           onUpdateNodeSize={handleUpdateNodeSize}
+          onUpdateNode={handleUpdateNode}
           onDoubleClickNode={handleDoubleClickNode}
           onAddNode={handleAddNode}
           onOpenDiagram={handleOpenDiagram}
@@ -1277,6 +1300,7 @@ export default function App() {
           onDeleteSelection={deleteSelection}
           onAddConnector={handleAddConnector}
           onReverseConnector={handleReverseConnector}
+          onUpdateConnector={handleUpdateConnector}
           onCopySelection={handleCopySelection}
           onCutSelection={handleCutSelection}
           onPaste={handlePaste}
@@ -1303,6 +1327,7 @@ export default function App() {
             onClearSelection={() => setSelection({ type: null })}
             onOpenDiagram={handleOpenDiagram}
             onCreateChildDiagram={handleCreateChildDiagram}
+            onUpdateNode={handleUpdateNode}
             onUpdateConnector={handleUpdateConnector}
             onReverseConnector={handleReverseConnector}
             analysisResults={analysisResults}

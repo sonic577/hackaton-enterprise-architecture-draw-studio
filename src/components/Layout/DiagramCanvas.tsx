@@ -32,6 +32,7 @@ interface CanvasProps {
   onCanvasClick: () => void
   onUpdateNodePosition?: (nodeId: string, x: number, y: number) => void
   onUpdateNodeSize?: (nodeId: string, width: number, height: number) => void
+  onUpdateNode?: (nodeId: string, updates: Partial<DiagramNode>) => void
   onDoubleClickNode?: (node: DiagramNode) => void
   onAddNode?: (type: string, position?: Position) => void
   onOpenDiagram?: (diagramId: string) => void
@@ -41,6 +42,7 @@ interface CanvasProps {
   onDeleteSelection?: () => void
   onAddConnector?: (sourceId: string, targetId: string) => void
   onReverseConnector?: (connectorId: string) => void
+  onUpdateConnector?: (connectorId: string, updates: Partial<DiagramConnector>) => void
   onCopySelection?: () => void
   onCutSelection?: () => void
   onPaste?: (position?: Position) => void
@@ -68,6 +70,7 @@ export default function Canvas({
   onCanvasClick,
   onUpdateNodePosition,
   onUpdateNodeSize,
+  onUpdateNode,
   onDoubleClickNode,
   onAddNode,
   onOpenDiagram,
@@ -77,6 +80,7 @@ export default function Canvas({
   onDeleteSelection,
   onAddConnector,
   onReverseConnector,
+  onUpdateConnector,
   onCopySelection,
   onCutSelection,
   onPaste,
@@ -113,6 +117,11 @@ export default function Canvas({
     sourceId: string
     start: Position
     end: Position
+  } | null>(null)
+  const [editingText, setEditingText] = useState<{
+    kind: 'node-title' | 'node-description' | 'connector-label'
+    id: string
+    value: string
   } | null>(null)
   const [isQuickCreateSubmitting, setIsQuickCreateSubmitting] = useState(false)
   const canvasContainerRef = useRef<HTMLDivElement>(null)
@@ -292,6 +301,7 @@ export default function Canvas({
   // Handle node drag start
   const handleNodeMouseDown = (e: React.MouseEvent, nodeId: string) => {
     e.stopPropagation()
+    if (editingText) return
     
     // Only drag on left click without modifier keys
     if (e.button !== 0) return
@@ -829,6 +839,66 @@ export default function Canvas({
     }
   }
 
+  const startNodeTextEdit = (
+    e: React.MouseEvent,
+    node: DiagramNode,
+    kind: 'node-title' | 'node-description'
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+    onSelectNode(node.id)
+    setDraggingNodeId(null)
+    setEditingText({
+      kind,
+      id: node.id,
+      value: kind === 'node-title' ? node.title : node.description ?? ''
+    })
+  }
+
+  const startConnectorLabelEdit = (e: React.MouseEvent, connector: DiagramConnector) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (isPresentationMode) return
+    onSelectConnector(connector.id)
+    setEditingText({
+      kind: 'connector-label',
+      id: connector.id,
+      value: connector.label ?? ''
+    })
+  }
+
+  const commitTextEdit = () => {
+    if (!editingText) return
+    const value = editingText.value.trim()
+
+    if (editingText.kind === 'node-title') {
+      onUpdateNode?.(editingText.id, { title: value || 'Untitled', name: value || 'Untitled' })
+    } else if (editingText.kind === 'node-description') {
+      onUpdateNode?.(editingText.id, { description: value })
+    } else {
+      onUpdateConnector?.(editingText.id, { label: value })
+    }
+
+    setEditingText(null)
+  }
+
+  const cancelTextEdit = () => setEditingText(null)
+
+  const handleEditKeyDown = (e: React.KeyboardEvent, multiline = false) => {
+    e.stopPropagation()
+
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      cancelTextEdit()
+      return
+    }
+
+    if (e.key === 'Enter' && (!multiline || !e.shiftKey)) {
+      e.preventDefault()
+      commitTextEdit()
+    }
+  }
+
   const resizeQuickCreateInput = () => {
     const input = quickCreateInputRef.current
     if (!input) return
@@ -1069,12 +1139,35 @@ export default function Canvas({
                       onSelectConnector(connector.id)
                     }}
                   />
-                  {connector.label && (
+                  {editingText?.kind === 'connector-label' && editingText.id === connector.id ? (
+                    <foreignObject
+                      x={visual.labelPosition.x - 80}
+                      y={visual.labelPosition.y - 18}
+                      width={160}
+                      height={34}
+                      className="overflow-visible"
+                    >
+                      <input
+                        autoFocus
+                        value={editingText.value}
+                        onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
+                        onKeyDown={(e) => handleEditKeyDown(e)}
+                        onBlur={commitTextEdit}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="h-7 w-full rounded border border-blue-300 bg-white px-2 text-center text-xs text-gray-800 shadow outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </foreignObject>
+                  ) : connector.label && (
                     <text
                       x={visual.labelPosition.x}
                       y={visual.labelPosition.y}
-                      className="text-xs fill-gray-600 pointer-events-none"
+                      className="cursor-text text-xs fill-gray-600"
                       textAnchor="middle"
+                      onDoubleClick={(e) => startConnectorLabelEdit(e, connector)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (!isPresentationMode) onSelectConnector(connector.id)
+                      }}
                     >
                       {connector.label}
                     </text>
@@ -1194,7 +1287,7 @@ export default function Canvas({
                     y={bounds.y}
                     width={bounds.width}
                     height={bounds.height}
-                    className="pointer-events-none"
+                    className="overflow-hidden"
                   >
                     <div className={`h-full p-3 flex flex-col ${isDrawingShape(node.type) || isBpmnNode(node.type) ? 'bg-transparent' : 'bg-white rounded-lg'}`}>
                       {/* Icon and title */}
@@ -1202,9 +1295,26 @@ export default function Canvas({
                         <div className={`${colors.text} flex-shrink-0 mt-0.5`}>
                           {getNodeIcon(node.type)}
                         </div>
-                        <h3 className="text-sm font-semibold text-gray-900 leading-tight">
-                          {node.title}
-                        </h3>
+                        {editingText?.kind === 'node-title' && editingText.id === node.id ? (
+                          <input
+                            autoFocus
+                            value={editingText.value}
+                            onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
+                            onKeyDown={(e) => handleEditKeyDown(e)}
+                            onBlur={commitTextEdit}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            className="min-w-0 flex-1 rounded border border-blue-300 bg-white px-1 text-sm font-semibold text-gray-900 outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <h3
+                            className="min-w-0 flex-1 cursor-text text-sm font-semibold leading-tight text-gray-900"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-title')}
+                          >
+                            {node.title}
+                          </h3>
+                        )}
                       </div>
 
                       {/* Status badge */}
@@ -1215,9 +1325,26 @@ export default function Canvas({
                       )}
 
                       {/* Description */}
-                      <p className="text-xs text-gray-600 line-clamp-2 flex-1">
-                        {node.description}
-                      </p>
+                      {editingText?.kind === 'node-description' && editingText.id === node.id ? (
+                        <textarea
+                          autoFocus
+                          value={editingText.value}
+                          onChange={(e) => setEditingText({ ...editingText, value: e.target.value })}
+                          onKeyDown={(e) => handleEditKeyDown(e, true)}
+                          onBlur={commitTextEdit}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                          className="min-h-10 flex-1 resize-none rounded border border-blue-300 bg-white px-1 py-0.5 text-xs text-gray-700 outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      ) : (
+                        <p
+                          className="line-clamp-2 flex-1 cursor-text text-xs text-gray-600"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => startNodeTextEdit(e, node, 'node-description')}
+                        >
+                          {node.description}
+                        </p>
+                      )}
                     </div>
                   </foreignObject>
 

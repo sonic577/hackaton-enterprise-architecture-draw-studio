@@ -37,6 +37,36 @@ interface ArchitectureNode {
   linkedDiagramId?: string
 }
 
+interface ObjectiveItem {
+  name: string
+  description: string
+}
+
+type QuickCaptureDomain =
+  | 'motivation'
+  | 'business'
+  | 'process'
+  | 'application'
+  | 'data'
+  | 'technology'
+  | 'integration'
+  | 'security'
+  | 'risk'
+  | 'recommendation'
+  | 'note'
+
+export interface DomainClassification {
+  domain: QuickCaptureDomain
+  nodeType: string
+  subtype?: string
+  name: string
+  description: string
+  layer: string
+  status: 'extracted' | 'inferred'
+  evidence: string
+  confidence: number
+}
+
 const normalize = (value: string) =>
   value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
@@ -47,6 +77,269 @@ const truncate = (value: string, maxLength = 180) => {
 
 const sentenceCase = (value: string) =>
   value.trim().replace(/\s+/g, ' ').replace(/^./, char => char.toUpperCase())
+
+const explicitDomainAliases: Record<string, QuickCaptureDomain> = {
+  motivacion: 'motivation',
+  motivation: 'motivation',
+  negocio: 'business',
+  business: 'business',
+  proceso: 'process',
+  process: 'process',
+  aplicacion: 'application',
+  application: 'application',
+  app: 'application',
+  dato: 'data',
+  datos: 'data',
+  data: 'data',
+  tecnologia: 'technology',
+  technology: 'technology',
+  infraestructura: 'technology',
+  integracion: 'integration',
+  integration: 'integration',
+  seguridad: 'security',
+  security: 'security',
+  riesgo: 'risk',
+  risk: 'risk',
+  recomendacion: 'recommendation',
+  recommendation: 'recommendation',
+  nota: 'note',
+  note: 'note'
+}
+
+const runtimeSignals = /\b(nodejs|node\.js|react|vite|python|fastapi|java|spring)\b/
+const storageSignals = /\b(ssd|disco|almacenamiento|storage)\b/
+
+const stripCommandAndDomain = (input: string) => {
+  const withoutCommand = input.trim().replace(commandPattern, '')
+  const explicit = withoutCommand.match(/^\s*([^:：]{2,40})\s*[:：]\s*(.+)$/)
+
+  if (!explicit) {
+    return {
+      explicitDomain: undefined as QuickCaptureDomain | undefined,
+      value: withoutCommand.trim()
+    }
+  }
+
+  const domainKey = normalize(explicit[1]).trim()
+  const explicitDomain = explicitDomainAliases[domainKey]
+  return {
+    explicitDomain,
+    value: explicitDomain ? explicit[2].trim() : withoutCommand.trim()
+  }
+}
+
+const classifyByDomain = (input: string, explicitDomain?: QuickCaptureDomain): Omit<DomainClassification, 'name' | 'description' | 'evidence'> | null => {
+  const normalizedInput = normalize(input)
+  const hasExplicitDomain = Boolean(explicitDomain)
+
+  if (explicitDomain === 'technology' || runtimeSignals.test(normalizedInput) || storageSignals.test(normalizedInput) || /\b(tecnologia|infraestructura|servidor|red|cloud|network|device)\b/.test(normalizedInput)) {
+    return {
+      domain: 'technology',
+      nodeType: 'Technology Component',
+      subtype: runtimeSignals.test(normalizedInput)
+        ? 'Runtime/Framework'
+        : storageSignals.test(normalizedInput)
+          ? 'Storage Device'
+          : /\b(cloud)\b/.test(normalizedInput)
+            ? 'Cloud Service'
+            : undefined,
+      layer: 'technology',
+      status: 'extracted',
+      confidence: hasExplicitDomain || runtimeSignals.test(normalizedInput) || storageSignals.test(normalizedInput) ? 0.96 : 0.88
+    }
+  }
+
+  if (explicitDomain === 'data' || /\b(base de datos|database|db)\b/.test(normalizedInput)) {
+    return {
+      domain: 'data',
+      nodeType: /\b(base de datos|database|db)\b/.test(normalizedInput) ? 'Data Store' : 'Data Entity',
+      subtype: /\b(base de datos|database|db)\b/.test(normalizedInput) ? 'Database' : undefined,
+      layer: 'data',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.9
+    }
+  }
+
+  if (/\b(dato|datos|entidad|entity|cliente|pedido|producto|customer|order|product)\b/.test(normalizedInput)) {
+    return {
+      domain: 'data',
+      nodeType: 'Data Entity',
+      layer: 'data',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.88
+    }
+  }
+
+  if (explicitDomain === 'application' || /\b(api)\b/.test(normalizedInput) || /\b(aplicacion|sistema|app|application|system)\b/.test(normalizedInput)) {
+    return {
+      domain: 'application',
+      nodeType: /\b(api)\b/.test(normalizedInput)
+        ? 'API'
+        : /\b(servicio|service)\b/.test(normalizedInput)
+          ? 'Application Service'
+          : 'Application Component',
+      layer: 'application',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.9
+    }
+  }
+
+  if (explicitDomain === 'integration' || /\b(integracion|integration|evento|event|cola|queue|mensaje|message|workflow)\b/.test(normalizedInput)) {
+    return {
+      domain: 'integration',
+      nodeType: /\b(api)\b/.test(normalizedInput)
+        ? 'API'
+        : /\b(evento|event)\b/.test(normalizedInput)
+          ? 'Event'
+          : /\b(cola|queue|mensaje|message)\b/.test(normalizedInput)
+            ? 'Message Queue'
+            : /\b(workflow)\b/.test(normalizedInput)
+              ? 'Workflow'
+              : 'Integration',
+      layer: 'integration',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.9
+    }
+  }
+
+  if (explicitDomain === 'security' || /\b(politica|policy|control|standard|estandar|cumplimiento|compliance)\b/.test(normalizedInput)) {
+    return {
+      domain: 'security',
+      nodeType: /\b(control)\b/.test(normalizedInput)
+        ? 'Control'
+        : /\b(standard|estandar)\b/.test(normalizedInput)
+          ? 'Standard'
+          : /\b(compliance|cumplimiento)\b/.test(normalizedInput)
+            ? 'Compliance Check'
+            : 'Policy',
+      layer: 'security',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.88
+    }
+  }
+
+  if (explicitDomain === 'risk' || /\b(cuello de botella|bottleneck)\b/.test(normalizedInput) || /\b(gap|brecha|problema|problem|issue|pain point|riesgo|risk)\b/.test(normalizedInput)) {
+    return {
+      domain: 'risk',
+      nodeType: /\b(cuello de botella|bottleneck)\b/.test(normalizedInput)
+        ? 'Bottleneck'
+        : /\b(riesgo|risk)\b/.test(normalizedInput)
+          ? 'Risk'
+          : /\b(issue)\b/.test(normalizedInput)
+            ? 'Issue'
+            : /\b(pain point)\b/.test(normalizedInput)
+              ? 'Pain Point'
+              : 'Gap',
+      layer: 'risk',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.9
+    }
+  }
+
+  if (explicitDomain === 'recommendation' || /\b(recomendacion|recommendation|solucion|solution|mejora|improvement|decision|accion|action)\b/.test(normalizedInput)) {
+    return {
+      domain: 'recommendation',
+      nodeType: /\b(solucion|solution)\b/.test(normalizedInput)
+        ? 'Solution Option'
+        : /\b(decision)\b/.test(normalizedInput)
+          ? 'Decision'
+          : /\b(accion|action)\b/.test(normalizedInput)
+            ? 'Action'
+            : 'Recommendation',
+      layer: 'recommendation',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.9
+    }
+  }
+
+  if (explicitDomain === 'motivation' || /\b(mision|mission|vision|objetivo|objetivos|meta|metas|goal|goals|objective|objectives|okr|driver|requirement|requisito|constraint|restriccion)\b/.test(normalizedInput)) {
+    return {
+      domain: 'motivation',
+      nodeType: /\b(mision|mission)\b/.test(normalizedInput)
+        ? 'Mission'
+        : /\b(vision)\b/.test(normalizedInput)
+          ? 'Vision'
+          : /\b(driver)\b/.test(normalizedInput)
+            ? 'Driver'
+            : /\b(requirement|requisito)\b/.test(normalizedInput)
+              ? 'Requirement'
+              : /\b(constraint|restriccion)\b/.test(normalizedInput)
+                ? 'Constraint'
+                : 'Objective',
+      layer: 'motivation',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.92
+    }
+  }
+
+  if (explicitDomain === 'business' || /\b(capacidad|capability|cadena de valor|value chain|value stream|actor|rol|role|area|unidad|unit|organization)\b/.test(normalizedInput)) {
+    return {
+      domain: 'business',
+      nodeType: /\b(capacidad|capability)\b/.test(normalizedInput)
+        ? 'Capability'
+        : /\b(cadena de valor|value chain)\b/.test(normalizedInput)
+          ? 'Value Chain'
+          : /\b(value stream)\b/.test(normalizedInput)
+            ? 'Value Stream'
+            : /\b(rol|role)\b/.test(normalizedInput)
+              ? 'Role'
+              : /\b(area|unidad|unit|organization)\b/.test(normalizedInput)
+                ? 'Organization Unit'
+                : 'Actor',
+      layer: 'business',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.88
+    }
+  }
+
+  if (explicitDomain === 'process' || /\b(proceso|process|flujo|workflow)\b/.test(normalizedInput)) {
+    return {
+      domain: 'process',
+      nodeType: 'Business Process',
+      layer: 'process',
+      status: 'extracted',
+      confidence: hasExplicitDomain ? 0.96 : 0.88
+    }
+  }
+
+  if (explicitDomain === 'note') {
+    return {
+      domain: 'note',
+      nodeType: 'Note',
+      layer: 'note',
+      status: 'extracted',
+      confidence: 0.96
+    }
+  }
+
+  return null
+}
+
+export const classifyDomainAndNodeType = (input: string): DomainClassification => {
+  const { explicitDomain, value } = stripCommandAndDomain(input)
+  const source = value || input.trim()
+  const classification = classifyByDomain(source, explicitDomain)
+
+  if (!classification) {
+    return {
+      domain: 'note',
+      nodeType: 'Note',
+      name: truncate(source || 'Note', 70),
+      description: source,
+      layer: 'note',
+      status: 'inferred',
+      evidence: input,
+      confidence: 0.25
+    }
+  }
+
+  return {
+    ...classification,
+    name: sentenceCase(truncate(source || classification.nodeType, 70)),
+    description: source || classification.nodeType,
+    evidence: input
+  }
+}
 
 const caseSignals = [
   'proceso actual',
@@ -72,6 +365,14 @@ const caseSignals = [
 export const isLongBusinessCaseInput = (input: string) => {
   const normalizedInput = normalize(input)
   return input.length > 500 || caseSignals.some(signal => normalizedInput.includes(signal))
+}
+
+export const isObjectivesInput = (input: string) => {
+  const normalizedInput = normalize(input)
+  return (
+    /\b(objetivo|objetivos|meta|metas|goal|goals|objective|objectives|target|targets|okr|okrs)\b/.test(normalizedInput) ||
+    /\bSO-\d{1,3}\b/i.test(input)
+  )
 }
 
 const intentMatches: IntentMatch[] = [
@@ -106,6 +407,291 @@ const cleanName = (input: string, match: IntentMatch) => {
     .replace(/^\s*(de|del|para|about|as|como|que|to|for|is|es)\s+/i, '')
     .replace(/^\s*[:：-]\s*/, '')
     .trim()
+}
+
+const cleanObjectiveText = (value: string) =>
+  value
+    .trim()
+    .replace(/^[\-*•]\s*/, '')
+    .replace(/^\d+[\).]\s*/, '')
+    .replace(/^(objetivo|objetivos|meta|metas|goal|goals|objective|objectives|target|targets|okr|okrs)\s*(\d{4})?\s*[:：-]\s*/i, '')
+    .replace(/^\s*(de|del|para|about|to|for)\s+/i, '')
+    .trim()
+
+const parseCodedObjectiveItems = (input: string): ObjectiveItem[] => {
+  const lines = input
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+  const codedItems: ObjectiveItem[] = []
+  let current: { name: string; descriptionLines: string[] } | null = null
+
+  for (const line of lines) {
+    const match = line.match(/^\s*(?:[-*•]\s*)?(SO-\d{1,3})\b\s*(?:[-—–:]\s*)?(.*)$/i)
+
+    if (match) {
+      if (current) {
+        codedItems.push({
+          name: current.name,
+          description: current.descriptionLines.join('\n').trim()
+        })
+      }
+
+      const code = match[1].toUpperCase()
+      const title = match[2].trim().replace(/^[^\p{L}\p{N}]+/u, '')
+      current = {
+        name: title ? `${code} — ${title}` : code,
+        descriptionLines: []
+      }
+      continue
+    }
+
+    if (current) {
+      current.descriptionLines.push(line)
+    }
+  }
+
+  if (current) {
+    codedItems.push({
+      name: current.name,
+      description: current.descriptionLines.join('\n').trim()
+    })
+  }
+
+  return codedItems
+    .map(item => ({
+      name: cleanObjectiveText(item.name),
+      description: item.description.trim() || cleanObjectiveText(item.name)
+    }))
+    .filter(item => item.name.length > 0)
+}
+
+const splitObjectiveItems = (input: string): ObjectiveItem[] => {
+  const codedItems = parseCodedObjectiveItems(input)
+  if (codedItems.length > 0) return codedItems
+
+  const afterHeader = input.includes(':') || input.includes('：')
+    ? input.split(/[:：]/).slice(1).join(':')
+    : input
+  const hasLineList = /\n|^\s*[-*•]|\n\s*\d+[\).]/m.test(input)
+  const source = isObjectivesInput(afterHeader) && !/\bSO-\d{1,3}\b/i.test(afterHeader)
+    ? cleanObjectiveText(afterHeader)
+    : afterHeader
+  const chunks = hasLineList
+    ? source.split(/\n+/)
+    : source.split(/[,;]+/)
+  const cleaned = chunks
+    .map(cleanObjectiveText)
+    .filter(item => item.length > 0)
+
+  if (cleaned.length > 1) {
+    return cleaned.map(item => ({
+      name: item,
+      description: item
+    }))
+  }
+
+  return [cleanObjectiveText(input)]
+    .filter(Boolean)
+    .map(item => ({
+      name: item,
+      description: item
+    }))
+}
+
+const generateObjectivesResponse = (input: string) => {
+  const normalizedInput = normalize(input)
+  const nodeType = /\b(meta|metas|goal|goals|target|targets)\b/.test(normalizedInput) ? 'Goal' : 'Objective'
+  const items = splitObjectiveItems(input)
+
+  return {
+    nodes: items.map((item, index) => ({
+      id: `objective-node-${index + 1}`,
+      name: sentenceCase(truncate(item.name, 70)),
+      type: nodeType,
+      description: item.description,
+      layer: 'motivation',
+      status: 'extracted',
+      evidence: input,
+      x: 120 + (index % 3) * 260,
+      y: 120 + Math.floor(index / 3) * 170
+    })),
+    connectors: [],
+    diagrams: [],
+    assumptions: [`Quick Capture interpreted this as objectives_view with ${items.length} objective${items.length === 1 ? '' : 's'}.`],
+    gaps: [],
+    risks: [],
+    recommendations: []
+  }
+}
+
+const generateDomainClassificationResponse = (input: string) => {
+  const classification = classifyDomainAndNodeType(input)
+
+  return {
+    nodes: [{
+      id: 'classified-node-1',
+      name: classification.name,
+      type: classification.nodeType,
+      description: classification.description,
+      layer: classification.layer,
+      status: classification.status,
+      evidence: classification.evidence,
+      properties: {
+        domain: classification.domain,
+        ...(classification.subtype ? { subtype: classification.subtype } : {})
+      },
+      x: 120,
+      y: 120
+    }],
+    connectors: [],
+    diagrams: [],
+    assumptions: [`Quick Capture classified this as ${classification.domain}/${classification.nodeType} with ${Math.round(classification.confidence * 100)}% confidence.`],
+    gaps: [],
+    risks: [],
+    recommendations: []
+  }
+}
+
+const explicitProcessListPattern = /\b(?:el proceso es|proceso|the process is|workflow|flujo)\s*[:：]\s*/i
+const conditionalStepPattern = /\b(if needed|if available|if required|si aplica|si es necesario|si esta disponible|si está disponible|si se requiere)\b/i
+
+const isExplicitProcessListInput = (input: string) => {
+  if (!explicitProcessListPattern.test(input)) return false
+  const afterHeader = input.split(explicitProcessListPattern).slice(1).join('').trim()
+  const steps = extractExplicitProcessSteps(afterHeader)
+  return steps.length >= 2
+}
+
+const extractExplicitProcessSteps = (input: string) =>
+  input
+    .split(/\r?\n|[;]+|(?:\s+->\s+)|(?:\s+→\s+)/)
+    .map(step => step
+      .trim()
+      .replace(/^[\-*•]\s*/, '')
+      .replace(/^\d+[\).]\s*/, '')
+      .replace(/\s+/g, ' ')
+    )
+    .filter(step => step.length > 2)
+
+const laneForStep = (step: string) => {
+  const normalizedStep = normalize(step)
+  if (/\b(customer|cliente)\b/.test(normalizedStep)) return 'Customer / Cliente'
+  if (/\b(caja|pay|pays|payment|pos|sale|sales|venta|registered|registrar)\b/.test(normalizedStep)) return 'Sales / POS / Caja'
+  if (/\b(inventory|inventario|fulfillment|bodega|entrega|delivered|delivery|product is delivered|availability|disponibilidad)\b/.test(normalizedStep)) return 'Inventory / Fulfillment / Bodega / Entrega'
+  if (/\b(assistant|auxiliar|pharmacy assistant|farmacia|prescription|formula|fórmula|request|solicitud|validates|validar)\b/.test(normalizedStep)) return 'Pharmacy Assistant / Auxiliar de farmacia'
+  return 'Pharmacy Assistant / Auxiliar de farmacia'
+}
+
+const cleanConditionalTaskName = (step: string) =>
+  sentenceCase(step.replace(conditionalStepPattern, '').replace(/[.。]+$/, '').trim())
+
+const gatewayNameForStep = (step: string) => {
+  const normalizedStep = normalize(step)
+  if (/\b(prescription|formula|fórmula)\b/.test(normalizedStep)) return 'Prescription validation needed?'
+  if (/\b(available|disponible|availability|disponibilidad)\b/.test(normalizedStep)) return 'Item available?'
+  return 'Condition applies?'
+}
+
+const generateExplicitProcessBpmnResponse = (input: string) => {
+  const afterHeader = input.split(explicitProcessListPattern).slice(1).join('').trim()
+  const steps = extractExplicitProcessSteps(afterHeader)
+  const bpmnDiagramId = 'quick-process-bpmn'
+  const lanes = Array.from(new Set(steps.map(laneForStep)))
+  const laneNames = lanes.length > 0
+    ? lanes
+    : ['Customer / Cliente', 'Pharmacy Assistant / Auxiliar de farmacia']
+  const laneY = (index: number) => 70 + index * 155
+  const laneByName = new Map(laneNames.map((name, index) => [name, laneY(index)]))
+  const yForStep = (step: string) => laneByName.get(laneForStep(step)) ?? laneY(0)
+  const nodes: ArchitectureNode[] = []
+  const connectors: Array<{
+    id: string
+    sourceId: string
+    targetId: string
+    relationshipType: string
+    label: string
+    description: string
+  }> = []
+  const connect = (sourceId: string, targetId: string, label = 'Sequence Flow') => {
+    connectors.push({
+      id: `explicit-bpmn-conn-${connectors.length + 1}`,
+      sourceId,
+      targetId,
+      relationshipType: 'Flow',
+      label,
+      description: label
+    })
+  }
+
+  laneNames.forEach((name, index) => {
+    addBpmnNode(nodes, `lane-${index + 1}`, 'Lane', name, 60, laneY(index) - 38, 'Swimlanes', Math.max(980, 320 + steps.length * 230), 140, `${name} lane`)
+  })
+
+  addBpmnNode(nodes, 'start', 'Start Event', 'Start', 150, laneY(0), 'Events', 90, 90, input)
+  let previousId = 'start'
+  let pendingNoGatewayId: string | null = null
+  let x = 340
+
+  steps.forEach((step, index) => {
+    const isConditional = conditionalStepPattern.test(step)
+    const taskName = truncate(cleanConditionalTaskName(step), 48)
+    const taskId = `task-${index + 1}`
+
+    if (isConditional) {
+      const gatewayId = `gateway-${index + 1}`
+      addBpmnNode(nodes, gatewayId, 'Exclusive Gateway (X)', gatewayNameForStep(step), x, yForStep(step), 'Gateways', 120, 120, step)
+      connect(previousId, gatewayId)
+      if (pendingNoGatewayId) connect(pendingNoGatewayId, gatewayId, 'No')
+      x += 210
+      addBpmnNode(nodes, taskId, 'User Task', taskName, x, yForStep(step), 'Activities', 190, 110, step)
+      connect(gatewayId, taskId, 'Yes')
+      previousId = taskId
+      pendingNoGatewayId = gatewayId
+      x += 230
+      return
+    }
+
+    addBpmnNode(nodes, taskId, 'User Task', taskName, x, yForStep(step), 'Activities', 190, 110, step)
+    if (pendingNoGatewayId) {
+      connect(pendingNoGatewayId, taskId, 'No')
+      pendingNoGatewayId = null
+    }
+    connect(previousId, taskId)
+    previousId = taskId
+    x += 230
+  })
+
+  addBpmnNode(nodes, 'end', 'End Event', 'End', x, laneY(0), 'Events', 90, 90, input)
+  if (pendingNoGatewayId) connect(pendingNoGatewayId, 'end', 'No')
+  connect(previousId, 'end')
+
+  return {
+    nodes: [{
+      id: 'current-process',
+      name: 'Current Process',
+      type: 'Business Process',
+      description: 'Step-by-step process captured from Quick Capture. Open the nested BPMN diagram to view the operational flow.',
+      layer: 'process',
+      status: 'extracted',
+      evidence: input,
+      linkedDiagramId: bpmnDiagramId,
+      x: 160,
+      y: 150
+    }],
+    connectors: [],
+    diagrams: [{
+      id: bpmnDiagramId,
+      name: 'Current Process BPMN',
+      parentNodeId: 'current-process',
+      nodes,
+      connectors
+    }],
+    assumptions: [`Quick Capture detected an explicit process list and generated a BPMN view with ${steps.length} step${steps.length === 1 ? '' : 's'}.`],
+    gaps: [],
+    risks: [],
+    recommendations: []
+  }
 }
 
 const splitSentences = (input: string) =>
@@ -441,8 +1027,21 @@ export const interpretQuickCaptureIntent = (input: string, _currentDiagram?: Dia
 }
 
 export const quickCaptureIntentToAnalysisResponse = (input: string, currentDiagram?: Diagram) => {
+  if (isObjectivesInput(input)) {
+    return generateObjectivesResponse(input)
+  }
+
+  if (isExplicitProcessListInput(input)) {
+    return generateExplicitProcessBpmnResponse(input)
+  }
+
   if (isLongBusinessCaseInput(input)) {
     return generateArchitectureCaseResponse(input)
+  }
+
+  const classification = classifyDomainAndNodeType(input)
+  if (classification.confidence >= 0.85) {
+    return generateDomainClassificationResponse(input)
   }
 
   const intent = interpretQuickCaptureIntent(input, currentDiagram)

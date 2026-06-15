@@ -1,4 +1,58 @@
 export const MATERIAL_ICON_BY_TYPE: Record<string, string> = {
+  Mission: 'flag',
+  Vision: 'visibility',
+  Goal: 'track_changes',
+  Objective: 'radio_button_checked',
+  Driver: 'explore',
+  Requirement: 'rule',
+  Constraint: 'block',
+  'Business Context': 'business_center',
+  Capability: 'psychology',
+  'Value Chain': 'account_tree',
+  'Value Stream': 'timeline',
+  'Business Process': 'schema',
+  'Process Step': 'check_box',
+  Actor: 'person',
+  Role: 'badge',
+  'Organization Unit': 'corporate_fare',
+  Gap: 'warning',
+  Risk: 'report',
+  Issue: 'error',
+  Bottleneck: 'speed',
+  'Pain Point': 'priority_high',
+  Recommendation: 'tips_and_updates',
+  'Solution Option': 'extension',
+  Decision: 'fork_right',
+  Action: 'task_alt',
+  'Application Component': 'apps',
+  'Application Service': 'api',
+  System: 'apps',
+  API: 'api',
+  Interface: 'integration_instructions',
+  'Data Entity': 'database',
+  'Data Store': 'storage',
+  'Data Flow': 'sync_alt',
+  Database: 'database',
+  'Data Object': 'description',
+  'Technology Component': 'memory',
+  Runtime: 'terminal',
+  Framework: 'sdk',
+  Server: 'developer_board',
+  Network: 'lan',
+  Device: 'devices',
+  'Storage Device': 'hard_drive',
+  'Cloud Service': 'cloud',
+  'Deployment Unit': 'deployed_code',
+  Integration: 'cable',
+  Event: 'bolt',
+  'Message Queue': 'queue',
+  Workflow: 'alt_route',
+  Policy: 'policy',
+  Control: 'security',
+  Standard: 'verified',
+  'Compliance Check': 'check_circle',
+  Note: 'notes',
+
   mission: 'flag',
   vision: 'visibility',
   process: 'schema',
@@ -139,6 +193,66 @@ export function getNodeColor(type: string): { bg: string; border: string; text: 
   if (type.startsWith('bpmn_')) return { bg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-700' }
 
   switch (type) {
+    case 'Mission':
+      return { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' }
+    case 'Vision':
+      return { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' }
+    case 'Goal':
+    case 'Objective':
+    case 'Recommendation':
+    case 'Solution Option':
+      return { bg: 'bg-indigo-50', border: 'border-indigo-200', text: 'text-indigo-700' }
+    case 'Gap':
+      return { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700' }
+    case 'Risk':
+      return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' }
+    case 'Business Process':
+    case 'Process Step':
+      return { bg: 'bg-cyan-50', border: 'border-cyan-200', text: 'text-cyan-700' }
+    case 'Application Component':
+    case 'Application Service':
+    case 'System':
+    case 'API':
+    case 'Interface':
+      return { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700' }
+    case 'Data Entity':
+    case 'Data Store':
+    case 'Data Flow':
+    case 'Database':
+    case 'Data Object':
+      return { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700' }
+    case 'Technology Component':
+    case 'Runtime':
+    case 'Framework':
+    case 'Server':
+    case 'Network':
+    case 'Device':
+    case 'Storage Device':
+    case 'Cloud Service':
+    case 'Deployment Unit':
+      return { bg: 'bg-slate-50', border: 'border-slate-300', text: 'text-slate-700' }
+    case 'Integration':
+    case 'Event':
+    case 'Message Queue':
+    case 'Workflow':
+      return { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700' }
+    case 'Policy':
+    case 'Control':
+    case 'Standard':
+    case 'Compliance Check':
+      return { bg: 'bg-violet-50', border: 'border-violet-200', text: 'text-violet-700' }
+    case 'Capability':
+    case 'Value Chain':
+    case 'Value Stream':
+    case 'Actor':
+    case 'Role':
+    case 'Organization Unit':
+    case 'Business Context':
+    case 'Driver':
+    case 'Requirement':
+    case 'Constraint':
+    case 'Note':
+      return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700' }
     case 'mission':
       return { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700' }
     case 'vision':
@@ -192,6 +306,54 @@ export function getElementColor(type: string): string {
   if (type.startsWith('bpmn_')) return 'bg-sky-600'
 
   switch (type) {
+    case 'Mission':
+      return 'bg-blue-600'
+    case 'Vision':
+      return 'bg-purple-600'
+    case 'Goal':
+    case 'Objective':
+    case 'Recommendation':
+    case 'Solution Option':
+      return 'bg-indigo-600'
+    case 'Gap':
+      return 'bg-yellow-600'
+    case 'Risk':
+      return 'bg-red-600'
+    case 'Business Process':
+    case 'Process Step':
+      return 'bg-cyan-600'
+    case 'Application Component':
+    case 'Application Service':
+    case 'System':
+    case 'API':
+    case 'Interface':
+      return 'bg-green-600'
+    case 'Data Entity':
+    case 'Data Store':
+    case 'Data Flow':
+    case 'Database':
+    case 'Data Object':
+      return 'bg-orange-600'
+    case 'Technology Component':
+    case 'Runtime':
+    case 'Framework':
+    case 'Server':
+    case 'Network':
+    case 'Device':
+    case 'Storage Device':
+    case 'Cloud Service':
+    case 'Deployment Unit':
+      return 'bg-slate-600'
+    case 'Integration':
+    case 'Event':
+    case 'Message Queue':
+    case 'Workflow':
+      return 'bg-emerald-600'
+    case 'Policy':
+    case 'Control':
+    case 'Standard':
+    case 'Compliance Check':
+      return 'bg-violet-600'
     case 'mission':
       return 'bg-blue-600'
     case 'vision':

@@ -19,7 +19,7 @@ interface ToolbarProps {
 export default function Toolbar({ 
   activeTool = 'select', 
   onToolChange,
-  currentDiagramName = 'Customer Onboarding',
+  currentDiagramName = 'Blank Canvas',
   parentDiagramName,
   currentNodeTitle,
   canGoBack = false,

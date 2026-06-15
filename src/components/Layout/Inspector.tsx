@@ -10,6 +10,7 @@ interface InspectorProps {
   onClearSelection: () => void
   onOpenDiagram?: (diagramId: string) => void
   onCreateChildDiagram?: (nodeId: string) => void
+  onUpdateNode?: (nodeId: string, updates: Partial<DiagramNode>) => void
   onUpdateConnector?: (connectorId: string, updates: Partial<DiagramConnector>) => void
   onReverseConnector?: (connectorId: string) => void
   analysisResults?: ProcessAnalysisResult[]
@@ -25,6 +26,7 @@ export default function Inspector({
   onClearSelection,
   onOpenDiagram,
   onCreateChildDiagram,
+  onUpdateNode,
   onUpdateConnector,
   onReverseConnector,
   analysisResults = [],
@@ -142,6 +144,7 @@ export default function Inspector({
       .split('_')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ')
+    const fieldClass = 'w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500'
 
     return (
       <div className="w-96 border-l border-gray-200 bg-white flex flex-col overflow-hidden">
@@ -155,9 +158,12 @@ export default function Inspector({
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                 {node.layer ?? node.type.replace(/_/g, ' ')}
               </p>
-              <h3 className="text-base font-bold text-gray-900 mt-1 line-clamp-2">
-                {node.title}
-              </h3>
+              <input
+                value={node.title}
+                onChange={(e) => onUpdateNode?.(node.id, { title: e.target.value, name: e.target.value })}
+                className="mt-1 w-full rounded border border-transparent bg-transparent px-1 text-base font-bold text-gray-900 outline-none focus:border-blue-300 focus:bg-white focus:ring-1 focus:ring-blue-500"
+                aria-label="Node name"
+              />
             </div>
           </div>
           <button onClick={onClearSelection} className="p-1 hover:bg-gray-100 rounded transition-colors">
@@ -168,14 +174,15 @@ export default function Inspector({
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {/* Layer */}
-          {node.layer && (
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Layer</p>
-              <p className="text-sm font-medium text-gray-900 bg-blue-50 border border-blue-200 rounded px-3 py-2">
-                {node.layer}
-              </p>
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Layer</p>
+            <input
+              value={node.layer ?? ''}
+              onChange={(e) => onUpdateNode?.(node.id, { layer: e.target.value })}
+              className={fieldClass}
+              placeholder="Layer"
+            />
+          </div>
 
           {/* BPMN Metadata */}
           {(node.category || node.bpmnType) && (
@@ -204,30 +211,42 @@ export default function Inspector({
             <p className="text-xs font-medium text-gray-600 mb-2">
               {node.type.startsWith('shape_') ? 'Shape Type' : 'Node Type'}
             </p>
-            <p className="text-sm font-medium text-gray-900 bg-gray-50 border border-gray-200 rounded px-3 py-2">
-              {nodeTypeLabel}
-            </p>
+            <input
+              value={node.type}
+              onChange={(e) => onUpdateNode?.(node.id, { type: e.target.value })}
+              className={fieldClass}
+              placeholder={nodeTypeLabel}
+            />
           </div>
 
           {/* Status */}
-          {node.status && (
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Status</p>
-              <span className={`inline-block text-xs font-medium px-2 py-1 rounded ${getStatusBadgeColor(node.status)}`}>
-                {node.status}
-              </span>
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Status</p>
+            <select
+              value={node.status ?? 'inferred'}
+              onChange={(e) => onUpdateNode?.(node.id, { status: e.target.value as DiagramNode['status'] })}
+              className={fieldClass}
+            >
+              <option value="extracted">Extracted</option>
+              <option value="inferred">Inferred</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+            </select>
+            <span className={`mt-2 inline-block text-xs font-medium px-2 py-1 rounded ${getStatusBadgeColor(node.status)}`}>
+              {node.status ?? 'inferred'}
+            </span>
+          </div>
 
           {/* Description */}
-          {node.description && (
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Description</p>
-              <p className="text-sm text-gray-700 leading-relaxed">
-                {node.description}
-              </p>
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Description</p>
+            <textarea
+              value={node.description ?? ''}
+              onChange={(e) => onUpdateNode?.(node.id, { description: e.target.value })}
+              className={`${fieldClass} min-h-24 resize-y`}
+              placeholder="Node description"
+            />
+          </div>
 
           {/* Context */}
           {node.context && (
@@ -240,14 +259,15 @@ export default function Inspector({
           )}
 
           {/* Source */}
-          {node.source && (
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-2">Source</p>
-              <p className="text-sm text-gray-700 leading-relaxed">
-                {node.source}
-              </p>
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Source</p>
+            <input
+              value={node.source ?? ''}
+              onChange={(e) => onUpdateNode?.(node.id, { source: e.target.value })}
+              className={fieldClass}
+              placeholder="Source"
+            />
+          </div>
 
           {/* Properties */}
           {node.properties && Object.keys(node.properties).length > 0 && (
@@ -295,12 +315,23 @@ export default function Inspector({
             </div>
           )}
 
+          {/* Evidence editor */}
+          <div>
+            <p className="text-xs font-medium text-gray-600 mb-2">Evidence</p>
+            <textarea
+              value={(node.evidence ?? []).join('\n')}
+              onChange={(e) => onUpdateNode?.(node.id, { evidence: e.target.value.split('\n').map(item => item.trim()).filter(Boolean) })}
+              className={`${fieldClass} min-h-20 resize-y`}
+              placeholder="One evidence item per line"
+            />
+          </div>
+
           {/* Evidence */}
-          {node.evidence && node.evidence.length > 0 && (
+          {false && (
             <div>
               <p className="text-xs font-medium text-gray-600 mb-2">Evidence</p>
               <ul className="space-y-2">
-                {node.evidence.map((item, idx) => (
+                {([] as string[]).map((item, idx) => (
                   <li key={idx} className="flex gap-2 text-sm">
                     <span className="text-gray-400 flex-shrink-0">✓</span>
                     <span className="text-gray-700">{item}</span>
